@@ -8,6 +8,10 @@
  */
 import type {
   CheckpointRef,
+  MissionBoardSnapshot,
+  MissionId,
+  MissionSummary,
+  OrchestrationMissionDetailSnapshot,
   OrchestrationCheckpointSummary,
   OrchestrationProject,
   OrchestrationProjectShell,
@@ -57,6 +61,18 @@ export interface ProjectionFullThreadDiffContext {
  * ProjectionSnapshotQueryShape - Service API for read-model snapshots.
  */
 export interface ProjectionSnapshotQueryShape {
+  readonly getMissionBoardSnapshot?: (
+    projectId?: ProjectId,
+  ) => Effect.Effect<MissionBoardSnapshot, ProjectionRepositoryError>;
+
+  readonly getMissionSummaryById?: (
+    missionId: MissionId,
+  ) => Effect.Effect<Option.Option<MissionSummary>, ProjectionRepositoryError>;
+
+  readonly getMissionDetailSnapshot?: (
+    missionId: MissionId,
+  ) => Effect.Effect<Option.Option<OrchestrationMissionDetailSnapshot>, ProjectionRepositoryError>;
+
   /**
    * Read the lightweight command snapshot used to bootstrap the in-memory
    * orchestration engine without hydrating message/activity/checkpoint bodies.

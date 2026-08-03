@@ -18,6 +18,7 @@ import {
   CommandId,
   type DiscoveredLocalServerList,
   EventId,
+  MissionId,
   type OrchestrationCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
@@ -25,6 +26,8 @@ import {
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
+  type OrchestrationMissionBoardStreamItem,
+  type OrchestrationMissionStreamItem,
   type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
@@ -1368,6 +1371,174 @@ const makeWsRpcLayer = (
                   snapshot: projectThreadDetailSnapshot(snapshot.value),
                 }),
                 afterSnapshot,
+              );
+            }),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.subscribeMissions]: (input) =>
+          observeRpcStreamEffect(
+            ORCHESTRATION_WS_METHODS.subscribeMissions,
+            Effect.gen(function* () {
+              const liveBuffer = yield* Queue.unbounded<OrchestrationEvent>();
+              yield* Effect.forkScoped(
+                orchestrationEngine.streamDomainEvents.pipe(
+                  Stream.filter((event) => event.aggregateKind === "mission"),
+                  Stream.runForEach((event) => Queue.offer(liveBuffer, event)),
+                ),
+                { startImmediately: true },
+              );
+
+              const toBoardItem = (
+                event: OrchestrationEvent,
+              ): Effect.Effect<Option.Option<OrchestrationMissionBoardStreamItem>, never> => {
+                if (event.aggregateKind !== "mission") {
+                  return Effect.succeed(Option.none());
+                }
+                return projectionSnapshotQuery.getMissionSummaryById!(
+                  MissionId.make(event.aggregateId),
+                ).pipe(
+                  Effect.retry({ times: 1 }),
+                  Effect.map(
+                    Option.flatMap((summary) =>
+                      input.projectId === undefined || summary.mission.projectId === input.projectId
+                        ? Option.some({
+                            kind: "mission-upserted" as const,
+                            sequence: event.sequence,
+                            summary,
+                          })
+                        : Option.none(),
+                    ),
+                  ),
+                  Effect.tapError((error) =>
+                    Effect.logWarning("mission board projection refetch failed", {
+                      missionId: event.aggregateId,
+                      error,
+                    }),
+                  ),
+                  Effect.orElseSucceed(() => Option.none()),
+                );
+              };
+              const mapBoardEvents = <E, R>(stream: Stream.Stream<OrchestrationEvent, E, R>) =>
+                stream.pipe(
+                  Stream.filter((event) => event.aggregateKind === "mission"),
+                  Stream.mapEffect(toBoardItem),
+                  Stream.filter(Option.isSome),
+                  Stream.map((item) => item.value),
+                );
+              const bufferedLive = mapBoardEvents(Stream.fromQueue(liveBuffer));
+              const completion =
+                input.requestCompletionMarker === true
+                  ? Stream.make({
+                      kind: "synchronized",
+                    } satisfies OrchestrationMissionBoardStreamItem)
+                  : Stream.empty;
+
+              if (input.afterSequence !== undefined) {
+                const head = yield* orchestrationEngine.latestSequence;
+                const gap = head - input.afterSequence;
+                if (gap >= 0 && gap <= THREAD_RESUME_MAX_GAP) {
+                  const catchUp = mapBoardEvents(
+                    orchestrationEngine.readEvents(input.afterSequence, gap),
+                  ).pipe(
+                    Stream.mapError(
+                      (cause) =>
+                        new OrchestrationGetSnapshotError({
+                          message: "Failed to replay mission board events",
+                          cause,
+                        }),
+                    ),
+                  );
+                  return Stream.concat(catchUp, Stream.concat(completion, bufferedLive));
+                }
+              }
+
+              const snapshot = yield* projectionSnapshotQuery.getMissionBoardSnapshot!(
+                input.projectId,
+              ).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationGetSnapshotError({
+                      message: "Failed to load mission board",
+                      cause,
+                    }),
+                ),
+              );
+              return Stream.concat(
+                Stream.make({
+                  kind: "snapshot",
+                  snapshot,
+                } satisfies OrchestrationMissionBoardStreamItem),
+                Stream.concat(completion, bufferedLive),
+              );
+            }),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.subscribeMission]: (input) =>
+          observeRpcStreamEffect(
+            ORCHESTRATION_WS_METHODS.subscribeMission,
+            Effect.gen(function* () {
+              const belongsToMission = (event: OrchestrationEvent) =>
+                event.aggregateKind === "mission" && event.aggregateId === input.missionId;
+              const liveBuffer = yield* Queue.unbounded<OrchestrationMissionStreamItem>();
+              yield* Effect.forkScoped(
+                orchestrationEngine.streamDomainEvents.pipe(
+                  Stream.filter(belongsToMission),
+                  Stream.runForEach((event) =>
+                    Queue.offer(liveBuffer, { kind: "event" as const, event }),
+                  ),
+                ),
+                { startImmediately: true },
+              );
+              const bufferedLive = Stream.fromQueue(liveBuffer);
+              const completion =
+                input.requestCompletionMarker === true
+                  ? Stream.make({
+                      kind: "synchronized",
+                    } satisfies OrchestrationMissionStreamItem)
+                  : Stream.empty;
+
+              if (input.afterSequence !== undefined) {
+                const head = yield* orchestrationEngine.latestSequence;
+                const gap = head - input.afterSequence;
+                if (gap >= 0 && gap <= THREAD_RESUME_MAX_GAP) {
+                  const catchUp = orchestrationEngine.readEvents(input.afterSequence, gap).pipe(
+                    Stream.filter(belongsToMission),
+                    Stream.map((event) => ({ kind: "event" as const, event })),
+                    Stream.mapError(
+                      (cause) =>
+                        new OrchestrationGetSnapshotError({
+                          message: `Failed to replay mission ${input.missionId} events`,
+                          cause,
+                        }),
+                    ),
+                  );
+                  return Stream.concat(catchUp, Stream.concat(completion, bufferedLive));
+                }
+              }
+
+              const snapshot = yield* projectionSnapshotQuery.getMissionDetailSnapshot!(
+                input.missionId,
+              ).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationGetSnapshotError({
+                      message: `Failed to load mission ${input.missionId}`,
+                      cause,
+                    }),
+                ),
+              );
+              if (Option.isNone(snapshot)) {
+                return yield* new OrchestrationGetSnapshotError({
+                  message: `Mission ${input.missionId} was not found`,
+                  cause: input.missionId,
+                });
+              }
+              return Stream.concat(
+                Stream.make({
+                  kind: "snapshot",
+                  snapshot: snapshot.value,
+                } satisfies OrchestrationMissionStreamItem),
+                Stream.concat(completion, bufferedLive),
               );
             }),
             { "rpc.aggregate": "orchestration" },

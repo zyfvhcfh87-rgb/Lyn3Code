@@ -2,6 +2,7 @@ import {
   CommandId,
   EventId,
   IsoDateTime,
+  MissionId,
   NonNegativeInt,
   OrchestrationActorKind,
   OrchestrationAggregateKind,
@@ -35,7 +36,7 @@ const EventMetadataFromJsonString = Schema.fromJsonString(OrchestrationEventMeta
 const AppendEventRequestSchema = Schema.Struct({
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  streamId: Schema.Union([ProjectId, ThreadId]),
+  streamId: Schema.Union([ProjectId, ThreadId, MissionId]),
   type: OrchestrationEventType,
   causationEventId: Schema.NullOr(EventId),
   correlationId: Schema.NullOr(CommandId),
@@ -51,7 +52,7 @@ const OrchestrationEventPersistedRowSchema = Schema.Struct({
   eventId: EventId,
   type: OrchestrationEventType,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  aggregateId: Schema.Union([ProjectId, ThreadId, MissionId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -61,6 +62,12 @@ const OrchestrationEventPersistedRowSchema = Schema.Struct({
 });
 
 const ReadFromSequenceRequestSchema = Schema.Struct({
+  sequenceExclusive: NonNegativeInt,
+  limit: Schema.Number,
+});
+const ReadForAggregateRequestSchema = Schema.Struct({
+  aggregateKind: OrchestrationAggregateKind,
+  aggregateId: Schema.Union([ProjectId, ThreadId, MissionId]),
   sequenceExclusive: NonNegativeInt,
   limit: Schema.Number,
 });
@@ -181,6 +188,32 @@ const makeEventStore = Effect.gen(function* () {
       `,
   });
 
+  const readEventRowsForAggregate = SqlSchema.findAll({
+    Request: ReadForAggregateRequestSchema,
+    Result: OrchestrationEventPersistedRowSchema,
+    execute: (request) =>
+      sql`
+        SELECT
+          sequence,
+          event_id AS "eventId",
+          event_type AS "type",
+          aggregate_kind AS "aggregateKind",
+          stream_id AS "aggregateId",
+          occurred_at AS "occurredAt",
+          command_id AS "commandId",
+          causation_event_id AS "causationEventId",
+          correlation_id AS "correlationId",
+          payload_json AS "payload",
+          metadata_json AS "metadata"
+        FROM orchestration_events
+        WHERE aggregate_kind = ${request.aggregateKind}
+          AND stream_id = ${request.aggregateId}
+          AND sequence > ${request.sequenceExclusive}
+        ORDER BY sequence ASC
+        LIMIT ${request.limit}
+      `,
+  });
+
   const append: OrchestrationEventStoreShape["append"] = (event) =>
     appendEventRow({
       eventId: event.eventId,
@@ -260,9 +293,66 @@ const makeEventStore = Effect.gen(function* () {
     return readPage(sequenceExclusive, normalizedLimit);
   };
 
+  const readForAggregate: OrchestrationEventStoreShape["readForAggregate"] = (
+    aggregateKind,
+    aggregateId,
+    sequenceExclusive = 0,
+    limit = DEFAULT_READ_FROM_SEQUENCE_LIMIT,
+  ) => {
+    const normalizedLimit = Math.max(0, Math.floor(limit));
+    if (normalizedLimit === 0) {
+      return Stream.empty;
+    }
+    const readPage = (
+      cursor: number,
+      remaining: number,
+    ): Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError> =>
+      Stream.fromEffect(
+        readEventRowsForAggregate({
+          aggregateKind,
+          aggregateId,
+          sequenceExclusive: cursor,
+          limit: Math.min(remaining, READ_PAGE_SIZE),
+        }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "OrchestrationEventStore.readForAggregate:query",
+              "OrchestrationEventStore.readForAggregate:decodeRows",
+            ),
+          ),
+          Effect.flatMap((rows) =>
+            Effect.forEach(rows, (row) =>
+              decodeEvent(row).pipe(
+                Effect.mapError(
+                  toPersistenceDecodeError("OrchestrationEventStore.readForAggregate:rowToEvent"),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ).pipe(
+        Stream.flatMap((events) => {
+          if (events.length === 0) {
+            return Stream.empty;
+          }
+          const nextRemaining = remaining - events.length;
+          if (nextRemaining <= 0) {
+            return Stream.fromIterable(events);
+          }
+          return Stream.concat(
+            Stream.fromIterable(events),
+            readPage(events[events.length - 1]!.sequence, nextRemaining),
+          );
+        }),
+      );
+
+    return readPage(Math.max(0, Math.floor(sequenceExclusive)), normalizedLimit);
+  };
+
   return {
     append,
     readFromSequence,
+    readForAggregate,
     readAll: () => readFromSequence(0, Number.MAX_SAFE_INTEGER),
   } satisfies OrchestrationEventStoreShape;
 });

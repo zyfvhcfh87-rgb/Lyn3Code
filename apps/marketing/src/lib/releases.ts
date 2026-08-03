@@ -1,4 +1,4 @@
-const REPO = "pingdotgg/t3code";
+const REPO = "zyfvhcfh87-rgb/Lyn3Code";
 
 export const RELEASES_URL = `https://github.com/${REPO}/releases`;
 

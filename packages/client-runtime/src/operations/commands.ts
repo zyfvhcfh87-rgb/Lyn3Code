@@ -48,6 +48,13 @@ export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond
 export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.respond">;
 export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert">;
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
+export type CreateMissionInput = CommandInput<"mission.create">;
+export type UpdateMissionInput = CommandInput<"mission.update">;
+export type CreateMissionTaskInput = CommandInput<"mission.task.create">;
+export type UpdateMissionTaskInput = CommandInput<"mission.task.update">;
+export type StartMissionInput = CommandInput<"mission.start">;
+export type RetryMissionInput = CommandInput<"mission.retry">;
+export type CancelMissionInput = CommandInput<"mission.cancel">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -294,6 +301,86 @@ export const stopThreadSession: (input: StopThreadSessionInput) => CommandEffect
   return yield* dispatch({
     ...input,
     type: "thread.session.stop",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const createMission: (input: CreateMissionInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.createMission",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "mission.create",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const updateMission: (input: UpdateMissionInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.updateMission",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "mission.update",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const createMissionTask: (input: CreateMissionTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.createMissionTask",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "mission.task.create",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const updateMissionTask: (input: UpdateMissionTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.updateMissionTask",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "mission.task.update",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const startMission: (input: StartMissionInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.startMission",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "mission.start",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const retryMission: (input: RetryMissionInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.retryMission",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "mission.retry",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const cancelMission: (input: CancelMissionInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.cancelMission",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "mission.cancel",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });

@@ -1,10 +1,23 @@
 import type {
+  AgentRun,
+  AgentRunId,
+  Mission,
+  MissionId,
+  MissionTask,
+  MissionTaskId,
   OrchestrationCommand,
   OrchestrationProject,
   OrchestrationReadModel,
   OrchestrationThread,
   ProjectId,
   ThreadId,
+} from "@t3tools/contracts";
+import {
+  canTransitionAgentRun,
+  canTransitionMission,
+  canTransitionMissionTask,
+  isActiveAgentRunStatus,
+  isTerminalAgentRunStatus,
 } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Effect from "effect/Effect";
@@ -37,6 +50,182 @@ export function listThreadsByProjectId(
   projectId: ProjectId,
 ): ReadonlyArray<OrchestrationThread> {
   return readModel.threads.filter((thread) => thread.projectId === projectId);
+}
+
+export function findMissionById(
+  readModel: OrchestrationReadModel,
+  missionId: MissionId,
+): Mission | undefined {
+  return readModel.missions?.find((mission) => mission.id === missionId);
+}
+
+export function findMissionTaskById(
+  readModel: OrchestrationReadModel,
+  taskId: MissionTaskId,
+): MissionTask | undefined {
+  return readModel.missionTasks?.find((task) => task.id === taskId);
+}
+
+export function findAgentRunById(
+  readModel: OrchestrationReadModel,
+  agentRunId: AgentRunId,
+): AgentRun | undefined {
+  return readModel.agentRuns?.find((run) => run.id === agentRunId);
+}
+
+export function findActiveAgentRun(
+  readModel: OrchestrationReadModel,
+  missionId: MissionId,
+): AgentRun | undefined {
+  return readModel.agentRuns?.find(
+    (run) => run.missionId === missionId && isActiveAgentRunStatus(run.status),
+  );
+}
+
+export function requireMission(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly missionId: MissionId;
+}): Effect.Effect<Mission, OrchestrationCommandInvariantError> {
+  const mission = findMissionById(input.readModel, input.missionId);
+  return mission
+    ? Effect.succeed(mission)
+    : Effect.fail(
+        invariantError(
+          input.command.type,
+          `Mission '${input.missionId}' does not exist for command '${input.command.type}'.`,
+        ),
+      );
+}
+
+export function requireMissionAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly missionId: MissionId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  return findMissionById(input.readModel, input.missionId)
+    ? Effect.fail(
+        invariantError(input.command.type, `Mission '${input.missionId}' already exists.`),
+      )
+    : Effect.void;
+}
+
+export function requireMissionTask(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly missionId: MissionId;
+  readonly taskId: MissionTaskId;
+}): Effect.Effect<MissionTask, OrchestrationCommandInvariantError> {
+  const task = findMissionTaskById(input.readModel, input.taskId);
+  return task?.missionId === input.missionId
+    ? Effect.succeed(task)
+    : Effect.fail(
+        invariantError(
+          input.command.type,
+          `Task '${input.taskId}' does not belong to mission '${input.missionId}'.`,
+        ),
+      );
+}
+
+export function requireMissionTaskAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly taskId: MissionTaskId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  return findMissionTaskById(input.readModel, input.taskId)
+    ? Effect.fail(invariantError(input.command.type, `Task '${input.taskId}' already exists.`))
+    : Effect.void;
+}
+
+export function requireAgentRun(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly missionId: MissionId;
+  readonly agentRunId: AgentRunId;
+}): Effect.Effect<AgentRun, OrchestrationCommandInvariantError> {
+  const run = findAgentRunById(input.readModel, input.agentRunId);
+  return run?.missionId === input.missionId
+    ? Effect.succeed(run)
+    : Effect.fail(
+        invariantError(
+          input.command.type,
+          `Agent run '${input.agentRunId}' does not belong to mission '${input.missionId}'.`,
+        ),
+      );
+}
+
+export function requireAgentRunAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly agentRunId: AgentRunId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  return findAgentRunById(input.readModel, input.agentRunId)
+    ? Effect.fail(
+        invariantError(input.command.type, `Agent run '${input.agentRunId}' already exists.`),
+      )
+    : Effect.void;
+}
+
+export function requireNoActiveAgentRun(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly missionId: MissionId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  const run = findActiveAgentRun(input.readModel, input.missionId);
+  return run
+    ? Effect.fail(
+        invariantError(
+          input.command.type,
+          `Mission '${input.missionId}' already has active agent run '${run.id}'.`,
+        ),
+      )
+    : Effect.void;
+}
+
+export function requireMissionTransition(input: {
+  readonly command: OrchestrationCommand;
+  readonly mission: Mission;
+  readonly status: Mission["status"];
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  return canTransitionMission(input.mission.status, input.status)
+    ? Effect.void
+    : Effect.fail(
+        invariantError(
+          input.command.type,
+          `Mission '${input.mission.id}' cannot transition from '${input.mission.status}' to '${input.status}'.`,
+        ),
+      );
+}
+
+export function requireMissionTaskTransition(input: {
+  readonly command: OrchestrationCommand;
+  readonly task: MissionTask;
+  readonly status: MissionTask["status"];
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  return canTransitionMissionTask(input.task.status, input.status)
+    ? Effect.void
+    : Effect.fail(
+        invariantError(
+          input.command.type,
+          `Task '${input.task.id}' cannot transition from '${input.task.status}' to '${input.status}'.`,
+        ),
+      );
+}
+
+export function requireAgentRunTransition(input: {
+  readonly command: OrchestrationCommand;
+  readonly run: AgentRun;
+  readonly status: AgentRun["status"];
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  return canTransitionAgentRun(input.run.status, input.status) &&
+    !(input.run.status === input.status && isTerminalAgentRunStatus(input.run.status))
+    ? Effect.void
+    : Effect.fail(
+        invariantError(
+          input.command.type,
+          `Agent run '${input.run.id}' cannot transition from '${input.run.status}' to '${input.status}'.`,
+        ),
+      );
 }
 
 export function requireProject(input: {

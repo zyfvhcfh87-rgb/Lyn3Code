@@ -24,6 +24,19 @@ import {
   ThreadApprovalResponseRequestedPayload as ContractsThreadApprovalResponseRequestedPayloadSchema,
   ThreadCheckpointRevertRequestedPayload as ContractsThreadCheckpointRevertRequestedPayloadSchema,
   ThreadSessionStopRequestedPayload as ContractsThreadSessionStopRequestedPayloadSchema,
+  MissionCreatedPayload as ContractsMissionCreatedPayloadSchema,
+  MissionUpdatedPayload as ContractsMissionUpdatedPayloadSchema,
+  MissionStartedPayload as ContractsMissionStartedPayloadSchema,
+  MissionCancellationRequestedPayload as ContractsMissionCancellationRequestedPayloadSchema,
+  MissionCancelledPayload as ContractsMissionCancelledPayloadSchema,
+  MissionCompletedPayload as ContractsMissionCompletedPayloadSchema,
+  MissionFailedPayload as ContractsMissionFailedPayloadSchema,
+  MissionRecoveryBlockedPayload as ContractsMissionRecoveryBlockedPayloadSchema,
+  MissionTaskCreatedPayload as ContractsMissionTaskCreatedPayloadSchema,
+  MissionTaskUpdatedPayload as ContractsMissionTaskUpdatedPayloadSchema,
+  MissionTaskLifecyclePayload as ContractsMissionTaskLifecyclePayloadSchema,
+  AgentRunStartedPayload as ContractsAgentRunStartedPayloadSchema,
+  AgentRunLifecyclePayload as ContractsAgentRunLifecyclePayloadSchema,
 } from "@t3tools/contracts";
 
 // Server-internal alias surface, backed by contract schemas as the source of truth.
@@ -58,3 +71,18 @@ export const ThreadApprovalResponseRequestedPayload =
 export const ThreadCheckpointRevertRequestedPayload =
   ContractsThreadCheckpointRevertRequestedPayloadSchema;
 export const ThreadSessionStopRequestedPayload = ContractsThreadSessionStopRequestedPayloadSchema;
+
+export const MissionCreatedPayload = ContractsMissionCreatedPayloadSchema;
+export const MissionUpdatedPayload = ContractsMissionUpdatedPayloadSchema;
+export const MissionStartedPayload = ContractsMissionStartedPayloadSchema;
+export const MissionCancellationRequestedPayload =
+  ContractsMissionCancellationRequestedPayloadSchema;
+export const MissionCancelledPayload = ContractsMissionCancelledPayloadSchema;
+export const MissionCompletedPayload = ContractsMissionCompletedPayloadSchema;
+export const MissionFailedPayload = ContractsMissionFailedPayloadSchema;
+export const MissionRecoveryBlockedPayload = ContractsMissionRecoveryBlockedPayloadSchema;
+export const MissionTaskCreatedPayload = ContractsMissionTaskCreatedPayloadSchema;
+export const MissionTaskUpdatedPayload = ContractsMissionTaskUpdatedPayloadSchema;
+export const MissionTaskLifecyclePayload = ContractsMissionTaskLifecyclePayloadSchema;
+export const AgentRunStartedPayload = ContractsAgentRunStartedPayloadSchema;
+export const AgentRunLifecyclePayload = ContractsAgentRunLifecyclePayloadSchema;

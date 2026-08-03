@@ -1,12 +1,13 @@
 # Glossary
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Lyn Code? See [docs/user](../user/).
 
-This is a living glossary for T3 Code. It explains what common terms mean in this codebase.
+This is a living glossary for Lyn Code. It explains what common terms mean in this codebase.
 
 ## Table of contents
 
 - [Project and workspace](#project-and-workspace)
+- [Missions](#missions)
 - [Thread timeline](#thread-timeline)
 - [Orchestration](#orchestration)
 - [Provider runtime](#provider-runtime)
@@ -28,6 +29,26 @@ The root filesystem path for a project. In [the orchestration model][1], it is t
 
 A Git worktree used as an isolated workspace for a thread. If a thread has a `worktreePath` in [the contracts][1], it runs there instead of in the main working tree. Git operations live behind the VCS driver contract in `apps/server/src/vcs/VcsDriver.ts`, implemented by [GitVcsDriverCore.ts][3].
 
+### Missions
+
+#### Mission
+
+A durable engineering outcome owned by a project. A mission has current status plus related tasks,
+agent runs, and an append-only event history. A linked provider conversation performs the work but
+does not replace mission state. See [missions.md][25].
+
+#### Mission task
+
+An ordered unit of work inside a mission. Phase 1 starts one task and one agent run at a time. Tasks
+remain persisted after completion, failure, cancellation, or restart recovery. See
+[missions.md][25].
+
+#### Agent run
+
+One attempt by one configured provider instance to execute a mission or task. It links the mission
+to a T3 thread and provider session while keeping lifecycle state provider-neutral. Retrying creates
+a new run instead of rewriting the earlier attempt. See [missions.md][25].
+
 ### Thread timeline
 
 #### Thread
@@ -48,7 +69,8 @@ Orchestration is the server-side domain layer that turns runtime activity into s
 
 #### Aggregate
 
-The domain object a command or event belongs to. In [the contracts][1], that is usually `project` or `thread`. See [decider.ts][8].
+The domain object a command or event belongs to. In [the contracts][1], that is usually `project`,
+`thread`, or `mission`. See [decider.ts][8].
 
 #### Command
 
@@ -74,7 +96,9 @@ The logic that applies domain events to the read model or projection tables. See
 
 #### Read model
 
-The current materialized view of orchestration state. In [the contracts][1], it holds projects, threads, messages, activities, checkpoints, and session state. See [ProjectionSnapshotQuery.ts][10] and [OrchestrationEngine.ts][7].
+The current materialized view of orchestration state. In [the contracts][1], it holds projects,
+threads, missions, tasks, agent runs, messages, activities, checkpoints, and session state. See
+[ProjectionSnapshotQuery.ts][10] and [OrchestrationEngine.ts][7].
 
 #### Reactor
 
@@ -154,6 +178,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 - [Provider architecture][16]
 - [Permission modes][18]
 - [Workspace layout][2]
+- [Mission architecture][25]
 
 [1]: ../../packages/contracts/src/orchestration.ts
 [2]: ./workspace-layout.md
@@ -179,3 +204,4 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../../apps/server/src/checkpointing/Utils.ts
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
+[25]: ./missions.md
