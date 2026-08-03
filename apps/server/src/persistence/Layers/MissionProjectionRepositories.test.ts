@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  ALL_AGENT_PERMISSIONS,
   AgentRunId,
   MissionId,
   MissionTaskId,
@@ -45,6 +46,33 @@ const projectId = ProjectId.make("project-mission-foundation");
 const missionId = MissionId.make("mission-foundation");
 const taskId = MissionTaskId.make("mission-task-foundation");
 const now = "2026-08-03T00:00:00.000Z";
+const missionPhase2Defaults = {
+  teamSettings: {
+    maximumConcurrentAgents: 3,
+    maximumConcurrentWriteAgents: 2,
+    defaultMaximumTaskAttempts: 3,
+    autoStartReadyTasks: false,
+    integrationMode: "manual" as const,
+  },
+  schedulerStatus: "idle" as const,
+};
+const taskPhase2Defaults = {
+  assignedMissionAgentId: null,
+  worktreeId: null,
+  attemptCount: 0,
+  maximumAttempts: 3,
+  readyAt: null,
+  blockedReason: null,
+  integrationStatus: "not_requested" as const,
+  requiresDependencyHandoffs: true,
+};
+const runPhase2Defaults = {
+  missionAgentId: null,
+  worktreeId: null,
+  attemptNumber: 1,
+  permissions: ALL_AGENT_PERMISSIONS,
+  writeCapable: true,
+};
 
 function seedProjectMissionAndTask({
   seedMissionId = missionId,
@@ -69,6 +97,7 @@ function seedProjectMissionAndTask({
       deletedAt: null,
     });
     yield* missions.upsert({
+      ...missionPhase2Defaults,
       id: seedMissionId,
       projectId,
       title: "Ship mission foundation",
@@ -81,6 +110,7 @@ function seedProjectMissionAndTask({
       cancelledAt: null,
     });
     yield* tasks.upsert({
+      ...taskPhase2Defaults,
       id: seedTaskId,
       missionId: seedMissionId,
       title: "Persist projections",
@@ -115,6 +145,7 @@ it.layer(makeMissionRepositoriesLayer(SqlitePersistenceMemory))(
           deletedAt: null,
         });
         yield* missions.upsert({
+          ...missionPhase2Defaults,
           id: backlogMissionId,
           projectId,
           title: "Not started yet",
@@ -130,6 +161,7 @@ it.layer(makeMissionRepositoriesLayer(SqlitePersistenceMemory))(
         assert.deepStrictEqual(
           Option.getOrNull(yield* missions.getById({ missionId: backlogMissionId })),
           {
+            ...missionPhase2Defaults,
             id: backlogMissionId,
             projectId,
             title: "Not started yet",
@@ -154,6 +186,7 @@ it.layer(makeMissionRepositoriesLayer(SqlitePersistenceMemory))(
 
         const secondTaskId = MissionTaskId.make("mission-task-foundation-second");
         yield* tasks.upsert({
+          ...taskPhase2Defaults,
           id: secondTaskId,
           missionId,
           title: "Verify projections",
@@ -167,6 +200,7 @@ it.layer(makeMissionRepositoriesLayer(SqlitePersistenceMemory))(
         });
 
         const run = {
+          ...runPhase2Defaults,
           id: AgentRunId.make("agent-run-foundation"),
           missionId,
           taskId,
@@ -184,6 +218,7 @@ it.layer(makeMissionRepositoriesLayer(SqlitePersistenceMemory))(
         yield* runs.upsert(run);
 
         assert.deepStrictEqual(Option.getOrNull(yield* missions.getById({ missionId })), {
+          ...missionPhase2Defaults,
           id: missionId,
           projectId,
           title: "Ship mission foundation",
@@ -211,7 +246,7 @@ it.layer(makeMissionRepositoriesLayer(SqlitePersistenceMemory))(
       }),
     );
 
-    it.effect("rejects a second active run for the same mission", () =>
+    it.effect("allows independent active runs for the same mission", () =>
       Effect.gen(function* () {
         const activeMissionId = MissionId.make("mission-active-run-constraint");
         const activeTaskId = MissionTaskId.make("mission-task-active-run-constraint");
@@ -222,6 +257,7 @@ it.layer(makeMissionRepositoriesLayer(SqlitePersistenceMemory))(
         const runs = yield* ProjectionAgentRunRepository;
 
         yield* runs.upsert({
+          ...runPhase2Defaults,
           id: AgentRunId.make("agent-run-active-first"),
           missionId: activeMissionId,
           taskId: activeTaskId,
@@ -237,24 +273,26 @@ it.layer(makeMissionRepositoriesLayer(SqlitePersistenceMemory))(
           errorSummary: null,
         });
 
-        const error = yield* Effect.flip(
-          runs.upsert({
-            id: AgentRunId.make("agent-run-active-second"),
-            missionId: activeMissionId,
-            taskId: null,
-            threadId: ThreadId.make("thread-agent-run-active-second"),
-            provider: "codex",
-            providerInstanceId: ProviderInstanceId.make("codex"),
-            providerSessionId: null,
-            status: "running",
-            createdAt: "2026-08-03T00:01:00.000Z",
-            startedAt: "2026-08-03T00:01:00.000Z",
-            updatedAt: "2026-08-03T00:01:00.000Z",
-            completedAt: null,
-            errorSummary: null,
-          }),
+        yield* runs.upsert({
+          ...runPhase2Defaults,
+          id: AgentRunId.make("agent-run-active-second"),
+          missionId: activeMissionId,
+          taskId: null,
+          threadId: ThreadId.make("thread-agent-run-active-second"),
+          provider: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerSessionId: null,
+          status: "running",
+          createdAt: "2026-08-03T00:01:00.000Z",
+          startedAt: "2026-08-03T00:01:00.000Z",
+          updatedAt: "2026-08-03T00:01:00.000Z",
+          completedAt: null,
+          errorSummary: null,
+        });
+        assert.strictEqual(
+          (yield* runs.listActiveByMissionId({ missionId: activeMissionId })).length,
+          2,
         );
-        assert.strictEqual(error._tag, "PersistenceSqlError");
       }),
     );
   },
@@ -274,6 +312,7 @@ it.effect("persists mission projections across a repository restart", () =>
           yield* seedProjectMissionAndTask();
           const runs = yield* ProjectionAgentRunRepository;
           yield* runs.upsert({
+            ...runPhase2Defaults,
             id: runId,
             missionId,
             taskId,

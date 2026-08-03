@@ -7,6 +7,7 @@ import * as Struct from "effect/Struct";
 import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity } from "./environment.ts";
 import {
+  AgentHandoffId,
   ApprovalRequestId,
   AgentRunId,
   CheckpointRef,
@@ -14,11 +15,15 @@ import {
   EventId,
   IsoDateTime,
   MessageId,
+  ManagedWorktreeId,
+  MissionAgentId,
   MissionId,
   MissionTaskId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   ProviderItemId,
+  TaskDependencyId,
   ThreadId,
   TrimmedNonEmptyString,
   TrimmedString,
@@ -26,13 +31,24 @@ import {
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  AgentHandoff,
+  AgentHandoffChangedFile,
+  AgentPermissions,
+  AgentRole,
   AgentRun,
+  ManagedWorktree,
+  ManagedWorktreeStatus,
   Mission,
+  MissionAgent,
   MissionBoardSnapshot,
+  MissionSchedulerStatus,
   MissionStatus,
   MissionSummary,
+  MissionTeamSettings,
   MissionTask,
   MissionTaskStatus,
+  TaskDependency,
+  TaskIntegrationStatus,
 } from "./mission.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
@@ -409,6 +425,11 @@ export const OrchestrationReadModel = Schema.Struct({
   missions: Schema.optionalKey(Schema.Array(Mission)),
   missionTasks: Schema.optionalKey(Schema.Array(MissionTask)),
   agentRuns: Schema.optionalKey(Schema.Array(AgentRun)),
+  agentRoles: Schema.optionalKey(Schema.Array(AgentRole)),
+  missionAgents: Schema.optionalKey(Schema.Array(MissionAgent)),
+  taskDependencies: Schema.optionalKey(Schema.Array(TaskDependency)),
+  managedWorktrees: Schema.optionalKey(Schema.Array(ManagedWorktree)),
+  agentHandoffs: Schema.optionalKey(Schema.Array(AgentHandoff)),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationReadModel = typeof OrchestrationReadModel.Type;
@@ -851,6 +872,9 @@ export const MissionTaskUpdateCommand = Schema.Struct({
   description: Schema.optional(Schema.String),
   status: Schema.optional(MissionTaskStatus),
   position: Schema.optional(NonNegativeInt),
+  assignedMissionAgentId: Schema.optional(Schema.NullOr(MissionAgentId)),
+  maximumAttempts: Schema.optional(PositiveInt),
+  requiresDependencyHandoffs: Schema.optional(Schema.Boolean),
   updatedAt: IsoDateTime,
 });
 
@@ -863,6 +887,11 @@ const MissionRunStartFields = {
   providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
+  missionAgentId: Schema.optional(MissionAgentId),
+  worktreeId: Schema.optional(ManagedWorktreeId),
+  attemptNumber: Schema.optional(PositiveInt),
+  permissions: Schema.optional(AgentPermissions),
+  writeCapable: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 } as const;
 
@@ -881,6 +910,125 @@ export const MissionCancelCommand = Schema.Struct({
   commandId: CommandId,
   missionId: MissionId,
   createdAt: IsoDateTime,
+});
+
+export const MissionTeamConfigureCommand = Schema.Struct({
+  type: Schema.Literal("mission.team.configure"),
+  commandId: CommandId,
+  missionId: MissionId,
+  settings: MissionTeamSettings,
+  updatedAt: IsoDateTime,
+});
+
+export const MissionAgentUpsertCommand = Schema.Struct({
+  type: Schema.Literal("mission.agent.upsert"),
+  commandId: CommandId,
+  missionId: MissionId,
+  agent: MissionAgent,
+});
+
+export const MissionAgentRemoveCommand = Schema.Struct({
+  type: Schema.Literal("mission.agent.remove"),
+  commandId: CommandId,
+  missionId: MissionId,
+  missionAgentId: MissionAgentId,
+  removedAt: IsoDateTime,
+});
+
+export const MissionAgentPermissionsUpdateCommand = Schema.Struct({
+  type: Schema.Literal("mission.agent.permissions.update"),
+  commandId: CommandId,
+  missionId: MissionId,
+  missionAgentId: MissionAgentId,
+  permissions: AgentPermissions,
+  updatedAt: IsoDateTime,
+});
+
+export const MissionTaskDependencyAddCommand = Schema.Struct({
+  type: Schema.Literal("mission.task.dependency.add"),
+  commandId: CommandId,
+  missionId: MissionId,
+  dependency: TaskDependency,
+});
+
+export const MissionTaskDependencyRemoveCommand = Schema.Struct({
+  type: Schema.Literal("mission.task.dependency.remove"),
+  commandId: CommandId,
+  missionId: MissionId,
+  dependencyId: TaskDependencyId,
+  taskId: MissionTaskId,
+  dependsOnTaskId: MissionTaskId,
+  removedAt: IsoDateTime,
+});
+
+export const MissionTaskRetryCommand = Schema.Struct({
+  type: Schema.Literal("mission.task.retry"),
+  commandId: CommandId,
+  missionId: MissionId,
+  taskId: MissionTaskId,
+  reason: TrimmedNonEmptyString,
+  requestedAt: IsoDateTime,
+});
+
+export const MissionTaskCancelCommand = Schema.Struct({
+  type: Schema.Literal("mission.task.cancel"),
+  commandId: CommandId,
+  missionId: MissionId,
+  taskId: MissionTaskId,
+  requestedAt: IsoDateTime,
+});
+
+const MissionSchedulerCommandFields = {
+  commandId: CommandId,
+  missionId: MissionId,
+  requestedAt: IsoDateTime,
+} as const;
+
+export const MissionSchedulerStartCommand = Schema.Struct({
+  type: Schema.Literal("mission.scheduler.start"),
+  ...MissionSchedulerCommandFields,
+});
+
+export const MissionSchedulerPauseCommand = Schema.Struct({
+  type: Schema.Literal("mission.scheduler.pause"),
+  ...MissionSchedulerCommandFields,
+});
+
+export const MissionSchedulerResumeCommand = Schema.Struct({
+  type: Schema.Literal("mission.scheduler.resume"),
+  ...MissionSchedulerCommandFields,
+});
+
+const MissionIntegrationCommandFields = {
+  commandId: CommandId,
+  missionId: MissionId,
+  taskId: MissionTaskId,
+  worktreeId: ManagedWorktreeId,
+  requestedAt: IsoDateTime,
+} as const;
+
+export const MissionIntegrationRequestCommand = Schema.Struct({
+  type: Schema.Literal("mission.integration.request"),
+  ...MissionIntegrationCommandFields,
+});
+
+export const MissionIntegrationApproveCommand = Schema.Struct({
+  type: Schema.Literal("mission.integration.approve"),
+  ...MissionIntegrationCommandFields,
+});
+
+export const MissionIntegrationAbortCommand = Schema.Struct({
+  type: Schema.Literal("mission.integration.abort"),
+  ...MissionIntegrationCommandFields,
+  reason: TrimmedNonEmptyString,
+});
+
+export const MissionWorktreeRemoveCommand = Schema.Struct({
+  type: Schema.Literal("mission.worktree.remove"),
+  commandId: CommandId,
+  missionId: MissionId,
+  worktreeId: ManagedWorktreeId,
+  requestedAt: IsoDateTime,
 });
 
 const DispatchableClientOrchestrationCommand = Schema.Union([
@@ -911,6 +1059,21 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   MissionStartCommand,
   MissionRetryCommand,
   MissionCancelCommand,
+  MissionTeamConfigureCommand,
+  MissionAgentUpsertCommand,
+  MissionAgentRemoveCommand,
+  MissionAgentPermissionsUpdateCommand,
+  MissionTaskDependencyAddCommand,
+  MissionTaskDependencyRemoveCommand,
+  MissionTaskRetryCommand,
+  MissionTaskCancelCommand,
+  MissionSchedulerStartCommand,
+  MissionSchedulerPauseCommand,
+  MissionSchedulerResumeCommand,
+  MissionIntegrationRequestCommand,
+  MissionIntegrationApproveCommand,
+  MissionIntegrationAbortCommand,
+  MissionWorktreeRemoveCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -943,6 +1106,21 @@ export const ClientOrchestrationCommand = Schema.Union([
   MissionStartCommand,
   MissionRetryCommand,
   MissionCancelCommand,
+  MissionTeamConfigureCommand,
+  MissionAgentUpsertCommand,
+  MissionAgentRemoveCommand,
+  MissionAgentPermissionsUpdateCommand,
+  MissionTaskDependencyAddCommand,
+  MissionTaskDependencyRemoveCommand,
+  MissionTaskRetryCommand,
+  MissionTaskCancelCommand,
+  MissionSchedulerStartCommand,
+  MissionSchedulerPauseCommand,
+  MissionSchedulerResumeCommand,
+  MissionIntegrationRequestCommand,
+  MissionIntegrationApproveCommand,
+  MissionIntegrationAbortCommand,
+  MissionWorktreeRemoveCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -1062,6 +1240,102 @@ export const MissionAgentRunInterruptCommand = Schema.Struct({
   interruptedAt: IsoDateTime,
 });
 
+export const MissionManagedWorktreeRecordCommand = Schema.Struct({
+  type: Schema.Literal("mission.worktree.record"),
+  commandId: CommandId,
+  missionId: MissionId,
+  worktree: ManagedWorktree,
+});
+
+export const MissionManagedWorktreeStatusUpdateCommand = Schema.Struct({
+  type: Schema.Literal("mission.worktree.status.update"),
+  commandId: CommandId,
+  missionId: MissionId,
+  worktreeId: ManagedWorktreeId,
+  status: ManagedWorktreeStatus,
+  headCommit: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  changedFileCount: Schema.optional(NonNegativeInt),
+  hasUncommittedChanges: Schema.optional(Schema.Boolean),
+  conflictingFiles: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  errorSummary: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  removedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  updatedAt: IsoDateTime,
+});
+
+export const MissionAgentHandoffCreateCommand = Schema.Struct({
+  type: Schema.Literal("mission.handoff.create"),
+  commandId: CommandId,
+  missionId: MissionId,
+  handoff: AgentHandoff,
+});
+
+export const MissionAgentHandoffReconcileCommand = Schema.Struct({
+  type: Schema.Literal("mission.handoff.reconcile"),
+  commandId: CommandId,
+  missionId: MissionId,
+  handoffId: AgentHandoffId,
+  reconciliationStatus: Schema.Literals(["matched", "corrected"]),
+  changedFiles: Schema.Array(AgentHandoffChangedFile),
+  reconciledAt: IsoDateTime,
+});
+
+export const MissionTaskMarkReadyCommand = Schema.Struct({
+  type: Schema.Literal("mission.task.mark-ready"),
+  commandId: CommandId,
+  missionId: MissionId,
+  taskId: MissionTaskId,
+  readyAt: IsoDateTime,
+});
+
+export const MissionTaskMarkBlockedCommand = Schema.Struct({
+  type: Schema.Literal("mission.task.mark-blocked"),
+  commandId: CommandId,
+  missionId: MissionId,
+  taskId: MissionTaskId,
+  reason: TrimmedNonEmptyString,
+  blockedAt: IsoDateTime,
+});
+
+export const MissionSchedulerConcurrencyLimitCommand = Schema.Struct({
+  type: Schema.Literal("mission.scheduler.concurrency-limit"),
+  commandId: CommandId,
+  missionId: MissionId,
+  maximumConcurrentAgents: PositiveInt,
+  maximumConcurrentWriteAgents: PositiveInt,
+  observedAt: IsoDateTime,
+});
+
+const MissionIntegrationResultCommandFields = {
+  commandId: CommandId,
+  missionId: MissionId,
+  taskId: MissionTaskId,
+  worktreeId: ManagedWorktreeId,
+  occurredAt: IsoDateTime,
+} as const;
+
+export const MissionIntegrationStartCommand = Schema.Struct({
+  type: Schema.Literal("mission.integration.start"),
+  ...MissionIntegrationResultCommandFields,
+});
+
+export const MissionIntegrationCompleteCommand = Schema.Struct({
+  type: Schema.Literal("mission.integration.complete"),
+  ...MissionIntegrationResultCommandFields,
+  headCommit: TrimmedNonEmptyString,
+});
+
+export const MissionIntegrationConflictCommand = Schema.Struct({
+  type: Schema.Literal("mission.integration.conflict"),
+  ...MissionIntegrationResultCommandFields,
+  conflictingFiles: Schema.Array(TrimmedNonEmptyString),
+});
+
+export const MissionIntegrationFailCommand = Schema.Struct({
+  type: Schema.Literal("mission.integration.fail"),
+  ...MissionIntegrationResultCommandFields,
+  errorSummary: TrimmedNonEmptyString,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -1076,6 +1350,17 @@ const InternalOrchestrationCommand = Schema.Union([
   MissionAgentRunFailCommand,
   MissionAgentRunCancelCommand,
   MissionAgentRunInterruptCommand,
+  MissionManagedWorktreeRecordCommand,
+  MissionManagedWorktreeStatusUpdateCommand,
+  MissionAgentHandoffCreateCommand,
+  MissionAgentHandoffReconcileCommand,
+  MissionTaskMarkReadyCommand,
+  MissionTaskMarkBlockedCommand,
+  MissionSchedulerConcurrencyLimitCommand,
+  MissionIntegrationStartCommand,
+  MissionIntegrationCompleteCommand,
+  MissionIntegrationConflictCommand,
+  MissionIntegrationFailCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -1133,6 +1418,32 @@ export const OrchestrationEventType = Schema.Literals([
   "agent_run.cancelled",
   "agent_run.failed",
   "agent_run.interrupted",
+  "mission.team-configured",
+  "mission.agent-upserted",
+  "mission.agent-removed",
+  "mission.agent-permissions-updated",
+  "task.dependency-added",
+  "task.dependency-removed",
+  "task.ready",
+  "task.blocked",
+  "task.retry-requested",
+  "task.cancellation-requested",
+  "managed_worktree.recorded",
+  "managed_worktree.status-updated",
+  "managed_worktree.removal-requested",
+  "agent_handoff.created",
+  "agent_handoff.reconciled",
+  "scheduler.started",
+  "scheduler.paused",
+  "scheduler.resumed",
+  "scheduler.concurrency-limited",
+  "integration.requested",
+  "integration.approved",
+  "integration.started",
+  "integration.completed",
+  "integration.conflicted",
+  "integration.aborted",
+  "integration.failed",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1364,13 +1675,25 @@ export const MissionStartedPayload = Schema.Struct({
 
 export const MissionCancellationRequestedPayload = Schema.Struct({
   missionId: MissionId,
-  agentRunId: AgentRunId,
+  // Kept for decoding Phase 1 events. New events populate `agentRunIds` and
+  // set this to the first active run (or null) for older clients.
+  agentRunId: Schema.NullOr(AgentRunId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  agentRunIds: Schema.Array(AgentRunId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   requestedAt: IsoDateTime,
 });
 
+export const missionCancellationAgentRunIds = (
+  payload: typeof MissionCancellationRequestedPayload.Type,
+): ReadonlyArray<AgentRunId> =>
+  payload.agentRunIds.length > 0
+    ? payload.agentRunIds
+    : payload.agentRunId === null
+      ? []
+      : [payload.agentRunId];
+
 export const MissionCancelledPayload = Schema.Struct({
   missionId: MissionId,
-  agentRunId: AgentRunId,
+  agentRunId: Schema.NullOr(AgentRunId),
   cancelledAt: IsoDateTime,
 });
 
@@ -1405,6 +1728,9 @@ export const MissionTaskUpdatedPayload = Schema.Struct({
   description: Schema.optional(Schema.String),
   status: Schema.optional(MissionTaskStatus),
   position: Schema.optional(NonNegativeInt),
+  assignedMissionAgentId: Schema.optional(Schema.NullOr(MissionAgentId)),
+  maximumAttempts: Schema.optional(PositiveInt),
+  requiresDependencyHandoffs: Schema.optional(Schema.Boolean),
   updatedAt: IsoDateTime,
 });
 
@@ -1428,6 +1754,127 @@ export const AgentRunLifecyclePayload = Schema.Struct({
   agentRunId: AgentRunId,
   providerSessionId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   occurredAt: IsoDateTime,
+  errorSummary: Schema.optional(TrimmedNonEmptyString),
+});
+
+export const MissionTeamConfiguredPayload = Schema.Struct({
+  missionId: MissionId,
+  settings: MissionTeamSettings,
+  updatedAt: IsoDateTime,
+});
+
+export const MissionAgentUpsertedPayload = Schema.Struct({
+  agent: MissionAgent,
+});
+
+export const MissionAgentRemovedPayload = Schema.Struct({
+  missionId: MissionId,
+  missionAgentId: MissionAgentId,
+  removedAt: IsoDateTime,
+});
+
+export const MissionAgentPermissionsUpdatedPayload = Schema.Struct({
+  missionId: MissionId,
+  missionAgentId: MissionAgentId,
+  permissions: AgentPermissions,
+  updatedAt: IsoDateTime,
+});
+
+export const MissionTaskDependencyAddedPayload = Schema.Struct({
+  dependency: TaskDependency,
+});
+
+export const MissionTaskDependencyRemovedPayload = Schema.Struct({
+  missionId: MissionId,
+  dependencyId: TaskDependencyId,
+  taskId: MissionTaskId,
+  dependsOnTaskId: MissionTaskId,
+  removedAt: IsoDateTime,
+});
+
+export const MissionTaskReadyPayload = Schema.Struct({
+  missionId: MissionId,
+  taskId: MissionTaskId,
+  readyAt: IsoDateTime,
+});
+
+export const MissionTaskBlockedPayload = Schema.Struct({
+  missionId: MissionId,
+  taskId: MissionTaskId,
+  reason: TrimmedNonEmptyString,
+  blockedAt: IsoDateTime,
+});
+
+export const MissionTaskRetryRequestedPayload = Schema.Struct({
+  missionId: MissionId,
+  taskId: MissionTaskId,
+  reason: TrimmedNonEmptyString,
+  attemptNumber: PositiveInt,
+  requestedAt: IsoDateTime,
+});
+
+export const MissionTaskCancellationRequestedPayload = Schema.Struct({
+  missionId: MissionId,
+  taskId: MissionTaskId,
+  requestedAt: IsoDateTime,
+});
+
+export const ManagedWorktreeRecordedPayload = Schema.Struct({
+  worktree: ManagedWorktree,
+});
+
+export const ManagedWorktreeStatusUpdatedPayload = Schema.Struct({
+  missionId: MissionId,
+  worktreeId: ManagedWorktreeId,
+  status: ManagedWorktreeStatus,
+  headCommit: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  changedFileCount: Schema.optional(NonNegativeInt),
+  hasUncommittedChanges: Schema.optional(Schema.Boolean),
+  conflictingFiles: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  errorSummary: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  removedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  updatedAt: IsoDateTime,
+});
+
+export const ManagedWorktreeRemovalRequestedPayload = Schema.Struct({
+  missionId: MissionId,
+  worktreeId: ManagedWorktreeId,
+  requestedAt: IsoDateTime,
+});
+
+export const AgentHandoffCreatedPayload = Schema.Struct({
+  handoff: AgentHandoff,
+});
+
+export const AgentHandoffReconciledPayload = Schema.Struct({
+  missionId: MissionId,
+  handoffId: AgentHandoffId,
+  reconciliationStatus: Schema.Literals(["matched", "corrected"]),
+  changedFiles: Schema.Array(AgentHandoffChangedFile),
+  reconciledAt: IsoDateTime,
+});
+
+export const MissionSchedulerLifecyclePayload = Schema.Struct({
+  missionId: MissionId,
+  status: MissionSchedulerStatus,
+  occurredAt: IsoDateTime,
+});
+
+export const MissionSchedulerConcurrencyLimitedPayload = Schema.Struct({
+  missionId: MissionId,
+  maximumConcurrentAgents: PositiveInt,
+  maximumConcurrentWriteAgents: PositiveInt,
+  observedAt: IsoDateTime,
+});
+
+export const MissionIntegrationLifecyclePayload = Schema.Struct({
+  missionId: MissionId,
+  taskId: MissionTaskId,
+  worktreeId: ManagedWorktreeId,
+  integrationStatus: TaskIntegrationStatus,
+  occurredAt: IsoDateTime,
+  headCommit: Schema.optional(TrimmedNonEmptyString),
+  conflictingFiles: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   errorSummary: Schema.optional(TrimmedNonEmptyString),
 });
 
@@ -1688,6 +2135,136 @@ export const OrchestrationEvent = Schema.Union([
     type: Schema.Literal("agent_run.interrupted"),
     payload: AgentRunLifecyclePayload,
   }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("mission.team-configured"),
+    payload: MissionTeamConfiguredPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("mission.agent-upserted"),
+    payload: MissionAgentUpsertedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("mission.agent-removed"),
+    payload: MissionAgentRemovedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("mission.agent-permissions-updated"),
+    payload: MissionAgentPermissionsUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.dependency-added"),
+    payload: MissionTaskDependencyAddedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.dependency-removed"),
+    payload: MissionTaskDependencyRemovedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.ready"),
+    payload: MissionTaskReadyPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.blocked"),
+    payload: MissionTaskBlockedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.retry-requested"),
+    payload: MissionTaskRetryRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.cancellation-requested"),
+    payload: MissionTaskCancellationRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("managed_worktree.recorded"),
+    payload: ManagedWorktreeRecordedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("managed_worktree.status-updated"),
+    payload: ManagedWorktreeStatusUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("managed_worktree.removal-requested"),
+    payload: ManagedWorktreeRemovalRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("agent_handoff.created"),
+    payload: AgentHandoffCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("agent_handoff.reconciled"),
+    payload: AgentHandoffReconciledPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("scheduler.started"),
+    payload: MissionSchedulerLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("scheduler.paused"),
+    payload: MissionSchedulerLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("scheduler.resumed"),
+    payload: MissionSchedulerLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("scheduler.concurrency-limited"),
+    payload: MissionSchedulerConcurrencyLimitedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("integration.requested"),
+    payload: MissionIntegrationLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("integration.approved"),
+    payload: MissionIntegrationLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("integration.started"),
+    payload: MissionIntegrationLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("integration.completed"),
+    payload: MissionIntegrationLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("integration.conflicted"),
+    payload: MissionIntegrationLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("integration.aborted"),
+    payload: MissionIntegrationLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("integration.failed"),
+    payload: MissionIntegrationLifecyclePayload,
+  }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
 
@@ -1696,6 +2273,15 @@ export const OrchestrationMissionDetailSnapshot = Schema.Struct({
   mission: Mission,
   tasks: Schema.Array(MissionTask),
   agentRuns: Schema.Array(AgentRun),
+  agentRoles: Schema.Array(AgentRole).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  missionAgents: Schema.Array(MissionAgent).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  taskDependencies: Schema.Array(TaskDependency).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  managedWorktrees: Schema.Array(ManagedWorktree).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  agentHandoffs: Schema.Array(AgentHandoff).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   events: Schema.Array(OrchestrationEvent),
 });
 export type OrchestrationMissionDetailSnapshot = typeof OrchestrationMissionDetailSnapshot.Type;

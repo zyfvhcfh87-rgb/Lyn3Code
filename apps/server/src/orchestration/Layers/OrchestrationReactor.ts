@@ -10,6 +10,8 @@ import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { MissionRunReactor } from "../Services/MissionRunReactor.ts";
+import { MissionSchedulerReactor } from "../Services/MissionSchedulerReactor.ts";
+import { MissionWorktreeReactor } from "../Services/MissionWorktreeReactor.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
 import * as AgentAwarenessRelay from "../../relay/AgentAwarenessRelay.ts";
 
@@ -19,6 +21,8 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
   const checkpointReactor = yield* CheckpointReactor;
   const threadDeletionReactor = yield* ThreadDeletionReactor;
   const missionRunReactor = yield* Effect.serviceOption(MissionRunReactor);
+  const missionSchedulerReactor = yield* Effect.serviceOption(MissionSchedulerReactor);
+  const missionWorktreeReactor = yield* Effect.serviceOption(MissionWorktreeReactor);
   const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
 
   const start: OrchestrationReactorShape["start"] = Effect.fn("start")(function* () {
@@ -26,8 +30,14 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
     yield* providerCommandReactor.start();
     yield* checkpointReactor.start();
     yield* threadDeletionReactor.start();
+    if (Option.isSome(missionWorktreeReactor)) {
+      yield* missionWorktreeReactor.value.start();
+    }
     if (Option.isSome(missionRunReactor)) {
       yield* missionRunReactor.value.start();
+    }
+    if (Option.isSome(missionSchedulerReactor)) {
+      yield* missionSchedulerReactor.value.start();
     }
     yield* agentAwarenessRelay.start();
   });

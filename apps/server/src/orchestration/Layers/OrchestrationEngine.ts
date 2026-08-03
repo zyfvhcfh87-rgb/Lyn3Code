@@ -70,11 +70,37 @@ function commandToAggregateRef(command: OrchestrationCommand): {
     case "mission.start":
     case "mission.retry":
     case "mission.cancel":
+    case "mission.team.configure":
+    case "mission.agent.upsert":
+    case "mission.agent.remove":
+    case "mission.agent.permissions.update":
+    case "mission.task.dependency.add":
+    case "mission.task.dependency.remove":
+    case "mission.task.retry":
+    case "mission.task.cancel":
+    case "mission.scheduler.start":
+    case "mission.scheduler.pause":
+    case "mission.scheduler.resume":
+    case "mission.integration.request":
+    case "mission.integration.approve":
+    case "mission.integration.abort":
+    case "mission.worktree.remove":
     case "mission.agent-run.mark-running":
     case "mission.agent-run.complete":
     case "mission.agent-run.fail":
     case "mission.agent-run.cancel":
     case "mission.agent-run.interrupt":
+    case "mission.worktree.record":
+    case "mission.worktree.status.update":
+    case "mission.handoff.create":
+    case "mission.handoff.reconcile":
+    case "mission.task.mark-ready":
+    case "mission.task.mark-blocked":
+    case "mission.scheduler.concurrency-limit":
+    case "mission.integration.start":
+    case "mission.integration.complete":
+    case "mission.integration.conflict":
+    case "mission.integration.fail":
       return {
         aggregateKind: "mission",
         aggregateId: command.missionId,

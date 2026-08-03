@@ -69,6 +69,18 @@ export class PersistenceDecodeError extends Schema.TaggedErrorClass<PersistenceD
     return `Decode error in ${this.operation}: ${this.issue}`;
   }
 }
+
+export class MissionProjectionValidationError extends Schema.TaggedErrorClass<MissionProjectionValidationError>()(
+  "MissionProjectionValidationError",
+  {
+    operation: Schema.String,
+    issue: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Mission projection validation failed in ${this.operation}: ${this.issue}`;
+  }
+}
 const isPersistenceSqlError = Schema.is(PersistenceSqlError);
 const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
 
@@ -135,4 +147,7 @@ export type ProviderSessionRuntimeRepositoryError = PersistenceSqlError | Persis
 export type AuthPairingLinkRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 export type AuthSessionRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 
-export type ProjectionRepositoryError = PersistenceSqlError | PersistenceDecodeError;
+export type ProjectionRepositoryError =
+  | PersistenceSqlError
+  | PersistenceDecodeError
+  | MissionProjectionValidationError;

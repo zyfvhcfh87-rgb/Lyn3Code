@@ -57,9 +57,11 @@ import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.t
 import { ProjectionMissionRepository } from "../../persistence/Services/ProjectionMissions.ts";
 import { ProjectionMissionTaskRepository } from "../../persistence/Services/ProjectionMissionTasks.ts";
 import { ProjectionAgentRunRepository } from "../../persistence/Services/ProjectionAgentRuns.ts";
+import { ProjectionMissionTeamRepository } from "../../persistence/Services/ProjectionMissionTeams.ts";
 import { ProjectionMissionRepositoryLive } from "../../persistence/Layers/ProjectionMissions.ts";
 import { ProjectionMissionTaskRepositoryLive } from "../../persistence/Layers/ProjectionMissionTasks.ts";
 import { ProjectionAgentRunRepositoryLive } from "../../persistence/Layers/ProjectionAgentRuns.ts";
+import { ProjectionMissionTeamRepositoryLive } from "../../persistence/Layers/ProjectionMissionTeams.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
@@ -326,6 +328,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const projectionMissionRepository = yield* ProjectionMissionRepository;
   const projectionMissionTaskRepository = yield* ProjectionMissionTaskRepository;
   const projectionAgentRunRepository = yield* ProjectionAgentRunRepository;
+  const projectionMissionTeamRepository = yield* ProjectionMissionTeamRepository;
   const orchestrationEventStore = yield* OrchestrationEventStore;
   const loadMissionState = Effect.fn("ProjectionSnapshotQuery.loadMissionState")(function* () {
     const missions = yield* projectionMissionRepository.listAll();
@@ -335,13 +338,26 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         Effect.all([
           projectionMissionTaskRepository.listByMissionId({ missionId: mission.id }),
           projectionAgentRunRepository.listByMissionId({ missionId: mission.id }),
+          projectionMissionTeamRepository.listMissionAgentsByMissionId({ missionId: mission.id }),
+          projectionMissionTeamRepository.listTaskDependenciesByMissionId({
+            missionId: mission.id,
+          }),
+          projectionMissionTeamRepository.listManagedWorktreesByMissionId({
+            missionId: mission.id,
+          }),
+          projectionMissionTeamRepository.listAgentHandoffsByMissionId({ missionId: mission.id }),
         ]),
       { concurrency: 1 },
     );
     return {
       missions,
+      agentRoles: yield* projectionMissionTeamRepository.listAgentRoles(),
       missionTasks: related.flatMap(([tasks]) => tasks),
       agentRuns: related.flatMap(([, runs]) => runs),
+      missionAgents: related.flatMap(([, , agents]) => agents),
+      taskDependencies: related.flatMap(([, , , dependencies]) => dependencies),
+      managedWorktrees: related.flatMap(([, , , , worktrees]) => worktrees),
+      agentHandoffs: related.flatMap(([, , , , , handoffs]) => handoffs),
     } as const;
   });
   const repositoryIdentityResolutionConcurrency = 4;
@@ -2326,17 +2342,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         (left, right) =>
           right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id),
       );
+      const activeAgentRuns = orderedRuns.filter(
+        (run) =>
+          run.status === "starting" || run.status === "running" || run.status === "cancelling",
+      );
       return Option.some({
         mission: mission.value,
         taskProgress: {
           total: tasks.length,
           completed: tasks.filter((task) => task.status === "completed").length,
         },
-        activeAgentRun:
-          orderedRuns.find(
-            (run) =>
-              run.status === "starting" || run.status === "running" || run.status === "cancelling",
-          ) ?? null,
+        activeAgentRun: activeAgentRuns[0] ?? null,
+        activeAgentRuns,
         latestAgentRun: orderedRuns[0] ?? null,
       });
     });
@@ -2403,9 +2420,24 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   (event) => event.aggregateKind === "mission" && event.aggregateId === missionId,
                 ),
               );
-          const [tasks, agentRuns, events, sequence] = yield* Effect.all([
+          const [
+            tasks,
+            agentRuns,
+            agentRoles,
+            missionAgents,
+            taskDependencies,
+            managedWorktrees,
+            agentHandoffs,
+            events,
+            sequence,
+          ] = yield* Effect.all([
             projectionMissionTaskRepository.listByMissionId({ missionId }),
             projectionAgentRunRepository.listByMissionId({ missionId }),
+            projectionMissionTeamRepository.listAgentRoles(),
+            projectionMissionTeamRepository.listMissionAgentsByMissionId({ missionId }),
+            projectionMissionTeamRepository.listTaskDependenciesByMissionId({ missionId }),
+            projectionMissionTeamRepository.listManagedWorktreesByMissionId({ missionId }),
+            projectionMissionTeamRepository.listAgentHandoffsByMissionId({ missionId }),
             Stream.runCollect(missionEvents).pipe(
               Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
             ),
@@ -2416,6 +2448,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             mission: mission.value,
             tasks,
             agentRuns,
+            agentRoles,
+            missionAgents,
+            taskDependencies,
+            managedWorktrees,
+            agentHandoffs,
             events,
           });
         }),
@@ -2460,4 +2497,5 @@ export const OrchestrationProjectionSnapshotQueryLive = Layer.effect(
   Layer.provideMerge(ProjectionMissionRepositoryLive),
   Layer.provideMerge(ProjectionMissionTaskRepositoryLive),
   Layer.provideMerge(ProjectionAgentRunRepositoryLive),
+  Layer.provideMerge(ProjectionMissionTeamRepositoryLive),
 );

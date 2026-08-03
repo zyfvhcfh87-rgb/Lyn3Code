@@ -39,15 +39,47 @@ does not replace mission state. See [missions.md][25].
 
 #### Mission task
 
-An ordered unit of work inside a mission. Phase 1 starts one task and one agent run at a time. Tasks
-remain persisted after completion, failure, cancellation, or restart recovery. See
-[missions.md][25].
+An ordered unit of work inside a mission. A task may depend on other tasks, be assigned to a mission
+agent and managed worktree, and retain several run attempts. See [missions.md][25].
+
+#### Mission agent
+
+A mission-scoped provider/model slot with one role, an effective capability set, status, and
+concurrency limit. It is configuration, not a running process; each attempt is an agent run.
+
+#### Agent role
+
+A provider-neutral role template such as coordinator, implementer, researcher, reviewer, or
+verifier. Roles supply conservative default capabilities that a mission agent may customize.
+
+#### Task dependency
+
+A directed edge from one mission task to a prerequisite task. The dependency graph must remain
+acyclic. Readiness can additionally require the prerequisite's structured handoff.
+
+#### Managed worktree
+
+A Git worktree and branch recorded as mission-owned state. A managed worktree is either the mission
+integration target or the isolated execution root for one write task. Safe removal validates the
+recorded identity and refuses active, dirty, conflicted, or unintegrated work.
 
 #### Agent run
 
 One attempt by one configured provider instance to execute a mission or task. It links the mission
-to a T3 thread and provider session while keeping lifecycle state provider-neutral. Retrying creates
-a new run instead of rewriting the earlier attempt. See [missions.md][25].
+to a T3 thread and provider session while keeping lifecycle state provider-neutral. Phase 2 runs
+also record the assigned mission agent, worktree, attempt number, and effective capabilities.
+Retrying creates a new run instead of rewriting the earlier attempt. See [missions.md][25].
+
+#### Agent handoff
+
+A persisted, structured outcome from one task run. It carries a summary, decisions, changed files,
+commands, unresolved problems, artifacts, and next action. Git reconciliation corrects changed-file
+claims before dependent tasks consume it.
+
+#### Mission integration branch
+
+The controlled branch and worktree that receives approved task branches in dependency order. It is
+separate from the project's default branch; Phase 2 never pushes or merges it into the default branch.
 
 ### Thread timeline
 
