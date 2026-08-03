@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { BrainCircuitIcon } from "lucide-react";
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { AgentRunId, EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { lazy, Suspense } from "react";
 
 import {
@@ -19,8 +19,13 @@ const MemoryWorkspace = lazy(() =>
   })),
 );
 
+export interface ProjectMemorySearch {
+  readonly agentRunId?: string;
+}
+
 function ProjectMemoryRoute() {
   const params = Route.useParams();
+  const search = Route.useSearch();
   const environmentId = EnvironmentId.make(params.environmentId);
   const projectId = ProjectId.make(params.projectId);
   const project =
@@ -59,6 +64,9 @@ function ProjectMemoryRoute() {
           environmentId={environmentId}
           projectId={projectId}
           projectTitle={project.title}
+          initialAgentRunId={
+            search.agentRunId === undefined ? null : AgentRunId.make(search.agentRunId)
+          }
         />
       </Suspense>
     </SidebarInset>
@@ -66,5 +74,7 @@ function ProjectMemoryRoute() {
 }
 
 export const Route = createFileRoute("/memory/$environmentId/$projectId")({
+  validateSearch: (search: Record<string, unknown>): ProjectMemorySearch =>
+    typeof search.agentRunId === "string" ? { agentRunId: search.agentRunId } : {},
   component: ProjectMemoryRoute,
 });

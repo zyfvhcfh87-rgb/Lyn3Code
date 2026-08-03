@@ -661,12 +661,18 @@ describe("MemoryRetrieval ranking and auditing", () => {
         }
         if ("selected" in metadata && Array.isArray(metadata.selected)) {
           for (const selected of metadata.selected) {
-            assert.deepStrictEqual(Object.keys(selected).sort(), [
-              "id",
-              "kind",
-              "reasons",
-              "score",
-            ]);
+            assert.notProperty(selected, "content");
+            assert.notProperty(selected, "excerpt");
+            assert.property(selected, "reasons");
+            if (selected.kind === "memory") {
+              assert.propertyVal(selected, "trustLevel", "supported");
+              assert.propertyVal(selected, "scopeType", "project");
+              assert.property(selected, "citation");
+            } else {
+              assert.propertyVal(selected, "path", "apps/desktop/src/preload.ts");
+              assert.property(selected, "startLine");
+              assert.property(selected, "commitHash");
+            }
           }
         }
       }

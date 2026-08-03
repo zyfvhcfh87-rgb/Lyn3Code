@@ -1,5 +1,6 @@
 import type {
   CreateMemoryEntryInput,
+  AgentRunId,
   EnvironmentId,
   MemoryEntryActionInput,
   MemoryIndexOperationType,
@@ -86,12 +87,16 @@ export function MemoryWorkspace({
   environmentId,
   projectId,
   projectTitle,
+  initialAgentRunId,
 }: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly projectTitle: string;
+  readonly initialAgentRunId: AgentRunId | null;
 }) {
-  const [section, setSection] = useState<MemoryWorkspaceSection>("overview");
+  const [section, setSection] = useState<MemoryWorkspaceSection>(
+    initialAgentRunId === null ? "overview" : "retrieval_history",
+  );
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredMemoryQuery(query);
   const [filters, setFilters] = useState<MemoryEntryFilterSelection>(EMPTY_MEMORY_FILTER_SELECTION);
@@ -148,7 +153,13 @@ export function MemoryWorkspace({
     section === "retrieval_history"
       ? memoryEnvironment.retrievalsAtom({
           environmentId,
-          input: { projectId, agentRunId: null, threadId: null, limit: 100, offset: 0 },
+          input: {
+            projectId,
+            agentRunId: initialAgentRunId,
+            threadId: null,
+            limit: 100,
+            offset: 0,
+          },
         })
       : null,
   );

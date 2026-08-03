@@ -30,6 +30,85 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { formatMemoryDate, humanizeMemoryValue } from "./MemoryEntryPanels";
 
+interface RetrievalAuditSelection {
+  readonly id: string;
+  readonly kind: "memory" | "chunk";
+  readonly title: string | null;
+  readonly memoryType: string | null;
+  readonly scopeType: string | null;
+  readonly trustLevel: string | null;
+  readonly status: string | null;
+  readonly path: string | null;
+  readonly startLine: number | null;
+  readonly endLine: number | null;
+  readonly commitHash: string | null;
+  readonly branchName: string | null;
+  readonly citation: Readonly<Record<string, unknown>> | null;
+  readonly score: number | null;
+  readonly reasons: ReadonlyArray<string>;
+}
+
+function auditSelections(metadata: unknown): ReadonlyArray<RetrievalAuditSelection> {
+  if (typeof metadata !== "object" || metadata === null || !("selected" in metadata)) return [];
+  const selected = (metadata as { readonly selected?: unknown }).selected;
+  if (!Array.isArray(selected)) return [];
+  const text = (value: unknown) => (typeof value === "string" ? value : null);
+  const number = (value: unknown) => (typeof value === "number" ? value : null);
+  return selected.flatMap((value) => {
+    if (typeof value !== "object" || value === null) return [];
+    const item = value as Readonly<Record<string, unknown>>;
+    const id = text(item.id);
+    const kind = item.kind === "memory" || item.kind === "chunk" ? item.kind : null;
+    if (id === null || kind === null) return [];
+    return [
+      {
+        id,
+        kind,
+        title: text(item.title),
+        memoryType: text(item.memoryType),
+        scopeType: text(item.scopeType),
+        trustLevel: text(item.trustLevel),
+        status: text(item.status),
+        path: text(item.path),
+        startLine: number(item.startLine),
+        endLine: number(item.endLine),
+        commitHash: text(item.commitHash),
+        branchName: text(item.branchName),
+        citation:
+          typeof item.citation === "object" && item.citation !== null
+            ? (item.citation as Readonly<Record<string, unknown>>)
+            : null,
+        score: number(item.score),
+        reasons: Array.isArray(item.reasons)
+          ? item.reasons.filter((reason): reason is string => typeof reason === "string")
+          : [],
+      },
+    ];
+  });
+}
+
+function auditCitation(selection: RetrievalAuditSelection) {
+  if (selection.kind === "chunk") {
+    const lines =
+      selection.startLine === null
+        ? ""
+        : `:${selection.startLine}${selection.endLine === null ? "" : `-${selection.endLine}`}`;
+    return `${selection.path ?? "Indexed source"}${lines}${
+      selection.commitHash === null ? "" : ` @ ${selection.commitHash.slice(0, 12)}`
+    }`;
+  }
+  const citation = selection.citation;
+  if (citation === null) return "No resolvable citation";
+  const path = typeof citation.path === "string" ? citation.path : null;
+  const sourceType = typeof citation.sourceType === "string" ? citation.sourceType : "source";
+  const startLine = typeof citation.startLine === "number" ? citation.startLine : null;
+  const endLine = typeof citation.endLine === "number" ? citation.endLine : null;
+  const commitHash = typeof citation.commitHash === "string" ? citation.commitHash : null;
+  return `${path ?? sourceType}${
+    startLine === null ? "" : `:${startLine}${endLine === null ? "" : `-${endLine}`}`
+  }${commitHash === null ? "" : ` @ ${commitHash.slice(0, 12)}`}`;
+}
+
 function Stat({ label, value }: { readonly label: string; readonly value: string | number }) {
   return (
     <div className="rounded-xl border bg-card p-3">
@@ -352,6 +431,31 @@ export function MemoryRetrievalHistory({
               <p className="break-all">
                 <strong>Selected chunk IDs:</strong> {record.selectedChunkIds.join(", ") || "None"}
               </p>
+              {auditSelections(record.rankingMetadata).map((selection) => (
+                <article
+                  key={`${selection.kind}:${selection.id}`}
+                  className="grid gap-1 rounded border bg-background p-2"
+                >
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <strong className="mr-auto">
+                      {selection.kind === "memory"
+                        ? (selection.title ?? selection.id)
+                        : (selection.path ?? selection.id)}
+                    </strong>
+                    <Badge variant="outline">{selection.kind}</Badge>
+                    {selection.scopeType ? (
+                      <Badge variant="outline">{humanizeMemoryValue(selection.scopeType)}</Badge>
+                    ) : null}
+                    {selection.trustLevel ? (
+                      <Badge variant="outline">{humanizeMemoryValue(selection.trustLevel)}</Badge>
+                    ) : null}
+                  </div>
+                  <p className="break-all text-muted-foreground">{auditCitation(selection)}</p>
+                  {selection.reasons.map((reason) => (
+                    <p key={reason}>Selected because {reason.toLocaleLowerCase()}.</p>
+                  ))}
+                </article>
+              ))}
               <pre className="max-h-52 overflow-auto whitespace-pre-wrap rounded bg-background p-2">
                 {JSON.stringify(record.rankingMetadata, null, 2)}
               </pre>
