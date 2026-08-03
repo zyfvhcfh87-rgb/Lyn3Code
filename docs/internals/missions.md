@@ -97,23 +97,24 @@ instance, model selection, session directory, and command reactor to start the t
 adapter remains selected at the existing provider boundary; mission code does not branch on Codex,
 Claude, Cursor, Grok, or OpenCode response shapes.
 
-The durable provider association is the run's `threadId` plus `providerInstanceId`. The current
-provider-neutral session contract does not expose a safe provider-native session identifier, so
-`providerSessionId` remains nullable and unset instead of storing a guessed or adapter-specific
-value.
+The durable provider association is the run's `threadId` plus `providerInstanceId`. When an adapter
+returns a stable provider-native session identifier, the provider-neutral session contract carries
+it into the run's nullable `providerSessionId` for traceability. Adapters leave the field unset
+rather than guessing when no safe identifier is available.
 
-Cancellation records intent first. The active run moves to `cancelling`, and the existing provider
-interrupt path is invoked for its linked thread before the provider session is stopped. Only a
-successful stop produces `agent_run.cancelled`, `task.cancelled`, and `mission.cancelled`. A stop
-failure produces failure events instead. Interruption uses its own terminal events and cannot be
-projected as completion.
+Cancellation records intent first. The active run moves to `cancelling`, then queues the existing
+thread interrupt and session-stop commands in that order. The provider command worker serializes
+those intents behind any in-flight session startup. Only a projected `stopped` or `interrupted`
+session produces `agent_run.cancelled`, `task.cancelled`, and `mission.cancelled`; a session error
+produces failure events instead. Interruption uses its own terminal events and cannot be projected
+as completion.
 
 ## Restart recovery
 
-Startup recovery queries active agent runs in deterministic creation order. The current
-provider-neutral session contract does not expose a safe cross-process resume capability, so Phase 1
-does not attempt automatic resume. The server dispatches `mission.agent-run.interrupt` exactly once
-for each active run.
+Startup recovery queries active agent runs in deterministic creation order. A provider-native
+session identifier alone is not a safe cross-process resume capability, so Phase 1 does not attempt
+automatic resume. The server dispatches `mission.agent-run.interrupt` exactly once for each active
+run.
 
 The interruption transition:
 
