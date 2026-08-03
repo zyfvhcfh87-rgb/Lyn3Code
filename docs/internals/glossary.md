@@ -8,6 +8,7 @@ This is a living glossary for Lyn Code. It explains what common terms mean in th
 
 - [Project and workspace](#project-and-workspace)
 - [Missions](#missions)
+- [Verification](#verification)
 - [Thread timeline](#thread-timeline)
 - [Orchestration](#orchestration)
 - [Provider runtime](#provider-runtime)
@@ -66,8 +67,8 @@ recorded identity and refuses active, dirty, conflicted, or unintegrated work.
 #### Agent run
 
 One attempt by one configured provider instance to execute a mission or task. It links the mission
-to a T3 thread and provider session while keeping lifecycle state provider-neutral. Phase 2 runs
-also record the assigned mission agent, worktree, attempt number, and effective capabilities.
+to a T3 thread and provider session while keeping lifecycle state provider-neutral. Team runs record
+the assigned mission agent, worktree, attempt number, purpose, and effective capabilities.
 Retrying creates a new run instead of rewriting the earlier attempt. See [missions.md][25].
 
 #### Agent handoff
@@ -80,6 +81,67 @@ claims before dependent tasks consume it.
 
 The controlled branch and worktree that receives approved task branches in dependency order. It is
 separate from the project's default branch; Phase 2 never pushes or merges it into the default branch.
+
+### Verification
+
+#### Verification configuration
+
+The versioned repository-local `t3.json` section that declares profiles, gates, checks, changed-file
+applicability, timeouts, diagnostics, and artifacts. Its normalized digest must be explicitly accepted
+before execution, and a changed digest requires fresh acceptance. See [verification.md][26].
+
+#### Verification profile
+
+A reusable ordered collection of verification gates, selected for manual, task-completion,
+pre-integration, or post-integration use. Profiles can reuse parent profiles but cannot form cycles.
+
+#### Verification gate
+
+One logical category inside a profile, such as typecheck, lint, test, build, or security. A gate records
+whether it is required, how its checks may run, and whether failure blocks, warns, or is informational.
+
+#### Verification check definition
+
+The accepted configuration for one executable check. It includes an argument-based command, validated
+working directory, environment references, timeout, allowed exit codes, continuation policy,
+applicability patterns, diagnostics parser, and artifact rules. It is not itself evidence that a
+command ran.
+
+#### Verification plan
+
+The immutable execution snapshot persisted before a run starts. It records the accepted configuration
+revision, source identity, changed files, safe environment summary, selected gates/checks, and explicit
+reasons for every selection or skip. Execution never silently reloads or alters this plan.
+
+#### Source fingerprint
+
+The identity of the exact Git state verified in one managed worktree: branch, commit, and when dirty, a
+deterministic fingerprint of tracked and relevant untracked changes. A later state cannot reuse the old
+authorization merely because its branch name is unchanged.
+
+#### Verification run
+
+One durable attempt to execute one profile against one source fingerprint. It owns check-run records and
+references to logs, diagnostics, artifacts, repair attempts, timestamps, failure classification, and
+final result. A rerun creates new history rather than mutating the earlier run.
+
+#### Verification check run
+
+The evidence for one planned command: exact command and arguments, working directory, selection reason,
+status, duration, exit code or signal, timeout flag, failure category, durable log reference, diagnostics,
+and artifacts.
+
+#### Verification override
+
+An explicit, reasoned user authorization for integrating one task source fingerprint despite missing or
+failed required verification. It is append-only audit evidence, remains separate from a pass, and becomes
+stale when the source fingerprint changes.
+
+#### Verification repair attempt
+
+A bounded agent run that receives focused failing evidence and writes only in the same task worktree. It
+retains the original task scope and cannot integrate branches or erase the failed run it is trying to
+repair.
 
 ### Thread timeline
 
@@ -211,6 +273,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 - [Permission modes][18]
 - [Workspace layout][2]
 - [Mission architecture][25]
+- [Automated verification architecture][26]
 
 [1]: ../../packages/contracts/src/orchestration.ts
 [2]: ./workspace-layout.md
@@ -237,3 +300,4 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
 [25]: ./missions.md
+[26]: ./verification.md

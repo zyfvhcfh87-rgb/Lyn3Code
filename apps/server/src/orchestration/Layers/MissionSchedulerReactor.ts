@@ -36,6 +36,7 @@ type SchedulerTrigger = Extract<
       | "task.dependency-removed"
       | "task.retry-requested"
       | "task.cancellation-requested"
+      | "task.implementation-completed"
       | "task.completed"
       | "task.failed"
       | "agent_handoff.created"
@@ -235,6 +236,7 @@ const make = Effect.gen(function* () {
               event.type === "task.dependency-removed" ||
               event.type === "task.retry-requested" ||
               event.type === "task.cancellation-requested" ||
+              event.type === "task.implementation-completed" ||
               event.type === "task.completed" ||
               event.type === "task.failed" ||
               event.type === "agent_handoff.created" ||

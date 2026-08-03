@@ -161,6 +161,50 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  GitHubAccount,
+  GitHubAccountId,
+  GitHubBranchObservation,
+  GitHubIssuePageSnapshot,
+  GitHubIssueState,
+  GitHubPullRequestDetailSnapshot,
+  GitHubPullRequestPageSnapshot,
+  GitHubRepositoryWorkspaceSnapshot,
+  GitHubSyncResourceType,
+  GitHubWorkspaceMutationError,
+  GitHubWorkspaceQueryError,
+  IssueMissionLink,
+  IssueMissionLinkType,
+  MissionPullRequestLink,
+  PullRequestRecord,
+  PullRequestState,
+  RepositoryConnection,
+  RepositoryConnectionId,
+  ReviewCommentRecordId,
+  ReviewCommentTaskLink,
+  ReviewThreadRecord,
+  ReviewThreadRecordId,
+} from "./github.ts";
+import {
+  VerificationLogPage,
+  VerificationArtifactAccessError,
+  VerificationArtifactAccessUrl,
+  VerificationQueryError,
+  VerificationRunComparison,
+  VerificationRunEvidence,
+  VerificationRunHistoryPage,
+  VerificationTaskSummary,
+  VerificationProjectConfigurationSnapshot,
+} from "./verification.ts";
+import {
+  MissionTaskId,
+  MissionId,
+  MissionAgentId,
+  ProjectId,
+  VerificationCheckRunId,
+  VerificationArtifactId,
+  VerificationRunId,
+} from "./baseSchemas.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -179,6 +223,37 @@ export const WS_METHODS = {
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
   assetsCreateUrl: "assets.createUrl",
+
+  // Verification evidence and configuration
+  verificationGetProjectConfiguration: "verification.getProjectConfiguration",
+  verificationListRuns: "verification.listRuns",
+  verificationGetRunEvidence: "verification.getRunEvidence",
+  verificationGetTaskSummaries: "verification.getTaskSummaries",
+  verificationCompareRuns: "verification.compareRuns",
+  verificationReadLog: "verification.readLog",
+  verificationCreateArtifactUrl: "verification.createArtifactUrl",
+  verificationSubscribeRun: "verification.subscribeRun",
+
+  // GitHub engineering workspace
+  githubListAccounts: "github.listAccounts",
+  githubConnectAccount: "github.connectAccount",
+  githubDisconnectAccount: "github.disconnectAccount",
+  githubConnectRepository: "github.connectRepository",
+  githubDisconnectRepository: "github.disconnectRepository",
+  githubGetWorkspace: "github.getWorkspace",
+  githubListIssues: "github.listIssues",
+  githubListPullRequests: "github.listPullRequests",
+  githubGetPullRequest: "github.getPullRequest",
+  githubRefresh: "github.refresh",
+  githubCreateMissionFromIssue: "github.createMissionFromIssue",
+  githubLinkIssueMission: "github.linkIssueMission",
+  githubCreateReviewTask: "github.createReviewTask",
+  githubPushBranch: "github.pushBranch",
+  githubCreatePullRequest: "github.createPullRequest",
+  githubUpdatePullRequest: "github.updatePullRequest",
+  githubMarkReadyForReview: "github.markReadyForReview",
+  githubResolveReviewThread: "github.resolveReviewThread",
+  githubSubscribeWorkspace: "github.subscribeWorkspace",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -481,6 +556,333 @@ export const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
   error: Schema.Union([AssetAccessError, EnvironmentAuthorizationError]),
+});
+
+export const WsVerificationGetProjectConfigurationRpc = Rpc.make(
+  WS_METHODS.verificationGetProjectConfiguration,
+  {
+    payload: Schema.Struct({ projectId: ProjectId }),
+    success: VerificationProjectConfigurationSnapshot,
+    error: Schema.Union([VerificationQueryError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsVerificationListRunsRpc = Rpc.make(WS_METHODS.verificationListRuns, {
+  payload: Schema.Struct({
+    projectId: ProjectId,
+    taskId: Schema.NullOr(MissionTaskId),
+    cursor: Schema.NullOr(Schema.String),
+    limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 })),
+  }),
+  success: VerificationRunHistoryPage,
+  error: Schema.Union([VerificationQueryError, EnvironmentAuthorizationError]),
+});
+
+export const WsVerificationGetRunEvidenceRpc = Rpc.make(WS_METHODS.verificationGetRunEvidence, {
+  payload: Schema.Struct({ verificationRunId: VerificationRunId }),
+  success: VerificationRunEvidence,
+  error: Schema.Union([VerificationQueryError, EnvironmentAuthorizationError]),
+});
+
+export const WsVerificationGetTaskSummariesRpc = Rpc.make(WS_METHODS.verificationGetTaskSummaries, {
+  payload: Schema.Struct({ projectId: ProjectId, taskIds: Schema.Array(MissionTaskId) }),
+  success: Schema.Array(VerificationTaskSummary),
+  error: Schema.Union([VerificationQueryError, EnvironmentAuthorizationError]),
+});
+
+export const WsVerificationCompareRunsRpc = Rpc.make(WS_METHODS.verificationCompareRuns, {
+  payload: Schema.Struct({
+    previousRunId: VerificationRunId,
+    currentRunId: VerificationRunId,
+  }),
+  success: VerificationRunComparison,
+  error: Schema.Union([VerificationQueryError, EnvironmentAuthorizationError]),
+});
+
+export const WsVerificationReadLogRpc = Rpc.make(WS_METHODS.verificationReadLog, {
+  payload: Schema.Struct({
+    verificationRunId: VerificationRunId,
+    checkRunId: VerificationCheckRunId,
+    cursor: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 })),
+  }),
+  success: VerificationLogPage,
+  error: Schema.Union([VerificationQueryError, EnvironmentAuthorizationError]),
+});
+
+export const WsVerificationCreateArtifactUrlRpc = Rpc.make(
+  WS_METHODS.verificationCreateArtifactUrl,
+  {
+    payload: Schema.Struct({
+      verificationRunId: VerificationRunId,
+      artifactId: VerificationArtifactId,
+    }),
+    success: VerificationArtifactAccessUrl,
+    error: Schema.Union([VerificationArtifactAccessError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsVerificationSubscribeRunRpc = Rpc.make(WS_METHODS.verificationSubscribeRun, {
+  payload: Schema.Struct({ verificationRunId: VerificationRunId }),
+  success: VerificationRunEvidence,
+  error: Schema.Union([VerificationQueryError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const GitHubReadRpcError = Schema.Union([GitHubWorkspaceQueryError, EnvironmentAuthorizationError]);
+const GitHubMutationRpcError = Schema.Union([
+  GitHubWorkspaceMutationError,
+  EnvironmentAuthorizationError,
+]);
+
+export const GitHubConnectAccountInput = Schema.Struct({
+  serverUrl: Schema.String,
+});
+export type GitHubConnectAccountInput = typeof GitHubConnectAccountInput.Type;
+
+export const GitHubConnectRepositoryInput = Schema.Struct({
+  projectId: ProjectId,
+  githubAccountId: GitHubAccountId,
+  repositoryUrl: Schema.NullOr(Schema.String),
+  owner: Schema.NullOr(Schema.String),
+  repository: Schema.NullOr(Schema.String),
+  remoteName: Schema.NullOr(Schema.String),
+});
+export type GitHubConnectRepositoryInput = typeof GitHubConnectRepositoryInput.Type;
+
+export const GitHubIssueQueryInput = Schema.Struct({
+  repositoryConnectionId: RepositoryConnectionId,
+  state: Schema.NullOr(GitHubIssueState),
+  search: Schema.NullOr(Schema.String),
+  labels: Schema.Array(Schema.String),
+  assignee: Schema.NullOr(Schema.String),
+  milestone: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  cursor: Schema.NullOr(Schema.String),
+  limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+  refresh: Schema.Boolean,
+});
+export type GitHubIssueQueryInput = typeof GitHubIssueQueryInput.Type;
+
+export const GitHubPullRequestQueryInput = Schema.Struct({
+  repositoryConnectionId: RepositoryConnectionId,
+  state: Schema.NullOr(PullRequestState),
+  search: Schema.NullOr(Schema.String),
+  cursor: Schema.NullOr(Schema.String),
+  limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+  refresh: Schema.Boolean,
+});
+export type GitHubPullRequestQueryInput = typeof GitHubPullRequestQueryInput.Type;
+
+export const GitHubCreateMissionFromIssueInput = Schema.Struct({
+  repositoryConnectionId: RepositoryConnectionId,
+  issueNumber: Schema.Int.check(Schema.isGreaterThan(0)),
+  linkType: IssueMissionLinkType,
+  selectedCommentIds: Schema.Array(Schema.String).pipe(Schema.mutable),
+});
+export type GitHubCreateMissionFromIssueInput = typeof GitHubCreateMissionFromIssueInput.Type;
+
+export const GitHubCreateMissionFromIssueResult = Schema.Struct({
+  missionId: MissionId,
+  link: IssueMissionLink,
+  duplicatePrevented: Schema.Boolean,
+});
+export type GitHubCreateMissionFromIssueResult = typeof GitHubCreateMissionFromIssueResult.Type;
+
+export const GitHubLinkIssueMissionInput = Schema.Struct({
+  repositoryConnectionId: RepositoryConnectionId,
+  issueNumber: Schema.Int.check(Schema.isGreaterThan(0)),
+  missionId: MissionId,
+  linkType: IssueMissionLinkType,
+});
+export type GitHubLinkIssueMissionInput = typeof GitHubLinkIssueMissionInput.Type;
+
+export const GitHubCreateReviewTaskInput = Schema.Struct({
+  reviewCommentRecordId: ReviewCommentRecordId,
+  missionId: MissionId,
+  assignedMissionAgentId: Schema.NullOr(MissionAgentId),
+  title: Schema.NullOr(Schema.String),
+});
+export type GitHubCreateReviewTaskInput = typeof GitHubCreateReviewTaskInput.Type;
+
+export const GitHubCreateReviewTaskResult = Schema.Struct({
+  taskId: MissionTaskId,
+  link: ReviewCommentTaskLink,
+});
+export type GitHubCreateReviewTaskResult = typeof GitHubCreateReviewTaskResult.Type;
+
+export const GitHubPushBranchInput = Schema.Struct({
+  missionId: MissionId,
+  taskId: Schema.NullOr(MissionTaskId),
+  repositoryConnectionId: RepositoryConnectionId,
+  branchName: Schema.String,
+  expectedHeadSha: Schema.String,
+  confirmation: Schema.Literal(true),
+});
+export type GitHubPushBranchInput = typeof GitHubPushBranchInput.Type;
+
+export const GitHubPushBranchResult = Schema.Struct({
+  observation: GitHubBranchObservation,
+  confirmedRemoteSha: Schema.String,
+});
+export type GitHubPushBranchResult = typeof GitHubPushBranchResult.Type;
+
+export const GitHubCreatePullRequestInput = Schema.Struct({
+  repositoryConnectionId: RepositoryConnectionId,
+  missionId: MissionId,
+  taskId: Schema.NullOr(MissionTaskId),
+  headBranch: Schema.String,
+  baseBranch: Schema.String,
+  title: Schema.String,
+  draft: Schema.Boolean,
+  linkedIssueNumber: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  closeLinkedIssue: Schema.Boolean,
+  bodyOverride: Schema.NullOr(Schema.String),
+  expectedHeadSha: Schema.String,
+  confirmation: Schema.Literal(true),
+});
+export type GitHubCreatePullRequestInput = typeof GitHubCreatePullRequestInput.Type;
+
+export const GitHubCreatePullRequestResult = Schema.Struct({
+  pullRequest: PullRequestRecord,
+  missionLink: MissionPullRequestLink,
+});
+export type GitHubCreatePullRequestResult = typeof GitHubCreatePullRequestResult.Type;
+
+export const GitHubUpdatePullRequestInput = Schema.Struct({
+  repositoryConnectionId: RepositoryConnectionId,
+  number: Schema.Int.check(Schema.isGreaterThan(0)),
+  title: Schema.optional(Schema.String),
+  body: Schema.optional(Schema.String),
+});
+export type GitHubUpdatePullRequestInput = typeof GitHubUpdatePullRequestInput.Type;
+
+export const WsGitHubListAccountsRpc = Rpc.make(WS_METHODS.githubListAccounts, {
+  payload: Schema.Struct({ includeDisconnected: Schema.Boolean }),
+  success: Schema.Array(GitHubAccount),
+  error: GitHubReadRpcError,
+});
+
+export const WsGitHubConnectAccountRpc = Rpc.make(WS_METHODS.githubConnectAccount, {
+  payload: GitHubConnectAccountInput,
+  success: GitHubAccount,
+  error: GitHubMutationRpcError,
+});
+
+export const WsGitHubDisconnectAccountRpc = Rpc.make(WS_METHODS.githubDisconnectAccount, {
+  payload: Schema.Struct({ githubAccountId: GitHubAccountId }),
+  success: GitHubAccount,
+  error: GitHubMutationRpcError,
+});
+
+export const WsGitHubConnectRepositoryRpc = Rpc.make(WS_METHODS.githubConnectRepository, {
+  payload: GitHubConnectRepositoryInput,
+  success: RepositoryConnection,
+  error: GitHubMutationRpcError,
+});
+
+export const WsGitHubDisconnectRepositoryRpc = Rpc.make(WS_METHODS.githubDisconnectRepository, {
+  payload: Schema.Struct({ repositoryConnectionId: RepositoryConnectionId }),
+  success: Schema.Void,
+  error: GitHubMutationRpcError,
+});
+
+export const WsGitHubGetWorkspaceRpc = Rpc.make(WS_METHODS.githubGetWorkspace, {
+  payload: Schema.Struct({ projectId: ProjectId }),
+  success: Schema.NullOr(GitHubRepositoryWorkspaceSnapshot),
+  error: GitHubReadRpcError,
+});
+
+export const WsGitHubListIssuesRpc = Rpc.make(WS_METHODS.githubListIssues, {
+  payload: GitHubIssueQueryInput,
+  success: GitHubIssuePageSnapshot,
+  error: GitHubReadRpcError,
+});
+
+export const WsGitHubListPullRequestsRpc = Rpc.make(WS_METHODS.githubListPullRequests, {
+  payload: GitHubPullRequestQueryInput,
+  success: GitHubPullRequestPageSnapshot,
+  error: GitHubReadRpcError,
+});
+
+export const WsGitHubGetPullRequestRpc = Rpc.make(WS_METHODS.githubGetPullRequest, {
+  payload: Schema.Struct({
+    repositoryConnectionId: RepositoryConnectionId,
+    number: Schema.Int.check(Schema.isGreaterThan(0)),
+    refresh: Schema.Boolean,
+  }),
+  success: GitHubPullRequestDetailSnapshot,
+  error: GitHubReadRpcError,
+});
+
+export const WsGitHubRefreshRpc = Rpc.make(WS_METHODS.githubRefresh, {
+  payload: Schema.Struct({
+    repositoryConnectionId: RepositoryConnectionId,
+    resources: Schema.Array(GitHubSyncResourceType),
+  }),
+  success: GitHubRepositoryWorkspaceSnapshot,
+  error: GitHubMutationRpcError,
+});
+
+export const WsGitHubCreateMissionFromIssueRpc = Rpc.make(WS_METHODS.githubCreateMissionFromIssue, {
+  payload: GitHubCreateMissionFromIssueInput,
+  success: GitHubCreateMissionFromIssueResult,
+  error: GitHubMutationRpcError,
+});
+
+export const WsGitHubLinkIssueMissionRpc = Rpc.make(WS_METHODS.githubLinkIssueMission, {
+  payload: GitHubLinkIssueMissionInput,
+  success: IssueMissionLink,
+  error: GitHubMutationRpcError,
+});
+
+export const WsGitHubCreateReviewTaskRpc = Rpc.make(WS_METHODS.githubCreateReviewTask, {
+  payload: GitHubCreateReviewTaskInput,
+  success: GitHubCreateReviewTaskResult,
+  error: GitHubMutationRpcError,
+});
+
+export const WsGitHubPushBranchRpc = Rpc.make(WS_METHODS.githubPushBranch, {
+  payload: GitHubPushBranchInput,
+  success: GitHubPushBranchResult,
+  error: GitHubMutationRpcError,
+});
+
+export const WsGitHubCreatePullRequestRpc = Rpc.make(WS_METHODS.githubCreatePullRequest, {
+  payload: GitHubCreatePullRequestInput,
+  success: GitHubCreatePullRequestResult,
+  error: GitHubMutationRpcError,
+});
+
+export const WsGitHubUpdatePullRequestRpc = Rpc.make(WS_METHODS.githubUpdatePullRequest, {
+  payload: GitHubUpdatePullRequestInput,
+  success: PullRequestRecord,
+  error: GitHubMutationRpcError,
+});
+
+export const WsGitHubMarkReadyForReviewRpc = Rpc.make(WS_METHODS.githubMarkReadyForReview, {
+  payload: Schema.Struct({
+    repositoryConnectionId: RepositoryConnectionId,
+    number: Schema.Int.check(Schema.isGreaterThan(0)),
+    confirmation: Schema.Literal(true),
+  }),
+  success: PullRequestRecord,
+  error: GitHubMutationRpcError,
+});
+
+export const WsGitHubResolveReviewThreadRpc = Rpc.make(WS_METHODS.githubResolveReviewThread, {
+  payload: Schema.Struct({
+    reviewThreadRecordId: ReviewThreadRecordId,
+    confirmation: Schema.Literal(true),
+  }),
+  success: ReviewThreadRecord,
+  error: GitHubMutationRpcError,
+});
+
+export const WsGitHubSubscribeWorkspaceRpc = Rpc.make(WS_METHODS.githubSubscribeWorkspace, {
+  payload: Schema.Struct({ projectId: ProjectId }),
+  success: Schema.NullOr(GitHubRepositoryWorkspaceSnapshot),
+  error: GitHubReadRpcError,
+  stream: true,
 });
 
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
@@ -837,6 +1239,33 @@ export const WsRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,
+  WsVerificationGetProjectConfigurationRpc,
+  WsVerificationListRunsRpc,
+  WsVerificationGetRunEvidenceRpc,
+  WsVerificationGetTaskSummariesRpc,
+  WsVerificationCompareRunsRpc,
+  WsVerificationReadLogRpc,
+  WsVerificationCreateArtifactUrlRpc,
+  WsVerificationSubscribeRunRpc,
+  WsGitHubListAccountsRpc,
+  WsGitHubConnectAccountRpc,
+  WsGitHubDisconnectAccountRpc,
+  WsGitHubConnectRepositoryRpc,
+  WsGitHubDisconnectRepositoryRpc,
+  WsGitHubGetWorkspaceRpc,
+  WsGitHubListIssuesRpc,
+  WsGitHubListPullRequestsRpc,
+  WsGitHubGetPullRequestRpc,
+  WsGitHubRefreshRpc,
+  WsGitHubCreateMissionFromIssueRpc,
+  WsGitHubLinkIssueMissionRpc,
+  WsGitHubCreateReviewTaskRpc,
+  WsGitHubPushBranchRpc,
+  WsGitHubCreatePullRequestRpc,
+  WsGitHubUpdatePullRequestRpc,
+  WsGitHubMarkReadyForReviewRpc,
+  WsGitHubResolveReviewThreadRpc,
+  WsGitHubSubscribeWorkspaceRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,

@@ -5,11 +5,14 @@ import {
   canTransitionManagedWorktree,
   hasWritePermission,
   isActiveAgentRunStatus,
+  isAuthorizingVerificationRun,
   type ManagedWorktree,
   type ManagedWorktreeStatus,
   type MissionTask,
   type OrchestrationEvent,
   type OrchestrationMissionDetailSnapshot,
+  type VerificationOverride,
+  type VerificationRun,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
@@ -29,7 +32,11 @@ import {
   type WorktreeStatus,
 } from "../../mission-git/MissionGitService.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
+import { ProjectionVerificationConfigurationRepository } from "../../persistence/Services/ProjectionVerificationConfiguration.ts";
+import { ProjectionVerificationRunRepository } from "../../persistence/Services/ProjectionVerificationRuns.ts";
 import { forkParked } from "../../serverActivation.ts";
+import { VerificationPathGuard } from "../../verification/VerificationPathGuard.ts";
+import { VerificationSourceCapture } from "../../verification/VerificationSourceCapture.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   MissionWorktreeReactor,
@@ -48,6 +55,7 @@ type WorktreeTrigger = Extract<
       | "mission.agent-permissions-updated"
       | "task.created"
       | "task.updated"
+      | "task.implementation-completed"
       | "task.completed"
       | "task.failed"
       | "task.retry-requested"
@@ -61,7 +69,8 @@ type WorktreeTrigger = Extract<
       | "managed_worktree.status-updated"
       | "managed_worktree.removal-requested"
       | "integration.approved"
-      | "integration.aborted";
+      | "integration.aborted"
+      | "verification.invalidated";
   }
 >;
 
@@ -117,6 +126,39 @@ export const makeMissionWorktreesRoot = (
 const sameStrings = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
   left.length === right.length && left.every((value, index) => value === right[index]);
 
+export const evaluateVerificationIntegrationEvidence = (input: {
+  readonly requiredProfileId: string;
+  readonly sourceFingerprint: string;
+  readonly runs: ReadonlyArray<VerificationRun>;
+  readonly overrides: ReadonlyArray<VerificationOverride>;
+}) => {
+  const matchingRun = input.runs
+    .toReversed()
+    .find(
+      (run) =>
+        run.profileId === input.requiredProfileId &&
+        run.sourceFingerprint === input.sourceFingerprint &&
+        isAuthorizingVerificationRun(run),
+    );
+  const matchingOverride = input.overrides
+    .toReversed()
+    .find(
+      (override) =>
+        override.revokedAt === null && override.sourceFingerprint === input.sourceFingerprint,
+    );
+  return {
+    authorized: matchingRun !== undefined || matchingOverride !== undefined,
+    matchingRun,
+    matchingOverride,
+    staleRuns: input.runs.filter(
+      (run) =>
+        run.profileId === input.requiredProfileId &&
+        run.sourceFingerprint !== input.sourceFingerprint &&
+        isAuthorizingVerificationRun(run),
+    ),
+  } as const;
+};
+
 const nextTransition = (
   current: ManagedWorktreeStatus,
   desired: ManagedWorktreeStatus,
@@ -132,6 +174,7 @@ const nextTransition = (
   if (current === "conflicted" && desired === "ready") return "dirty";
   if (current === "conflicted" && desired === "active") return "dirty";
   if (current === "conflicted" && desired === "integrated") return "integration_ready";
+  if (current === "integration_ready" && desired === "ready") return "active";
   return null;
 };
 
@@ -143,6 +186,12 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectionProjectRepository;
   const git = yield* MissionGitService;
   const path = yield* Path.Path;
+  const verificationConfigurations = yield* Effect.serviceOption(
+    ProjectionVerificationConfigurationRepository,
+  );
+  const verificationRuns = yield* Effect.serviceOption(ProjectionVerificationRunRepository);
+  const verificationPathGuard = yield* Effect.serviceOption(VerificationPathGuard);
+  const verificationSourceCapture = yield* Effect.serviceOption(VerificationSourceCapture);
 
   if (query.getMissionDetailSnapshot === undefined) {
     return {
@@ -636,6 +685,103 @@ const make = Effect.gen(function* () {
       (entry) => entry.purpose === "integration" && entry.status !== "removed",
     );
     if (task === undefined || taskWorktree === undefined || integration === undefined) return;
+    if (
+      Option.isSome(verificationConfigurations) &&
+      Option.isSome(verificationRuns) &&
+      Option.isSome(verificationPathGuard) &&
+      Option.isSome(verificationSourceCapture)
+    ) {
+      const settings = yield* verificationConfigurations.value.getProjectSettings({
+        projectId: detail.mission.projectId,
+      });
+      if (Option.isSome(settings) && settings.value.preIntegrationProfileId !== null) {
+        const requiredProfileId = settings.value.preIntegrationProfileId;
+        const guarded = yield* Effect.gen(function* () {
+          const authorized = yield* verificationPathGuard.value.authorizeWorktree({
+            assignedWorktreeRoot: taskWorktree.worktreePath,
+            registeredWorktreeRoots: detail.managedWorktrees
+              .filter((entry) => entry.status !== "removed")
+              .map((entry) => entry.worktreePath),
+          });
+          const source = yield* verificationSourceCapture.value.capture({
+            worktree: authorized,
+            baseRef: integration.branchName,
+          });
+          const runs = yield* verificationRuns.value.listRunsByTaskId({ taskId: task.id });
+          const overrides = yield* verificationRuns.value.listOverridesByTaskId({
+            taskId: task.id,
+          });
+          const evidence = evaluateVerificationIntegrationEvidence({
+            requiredProfileId,
+            sourceFingerprint: source.sourceFingerprint,
+            runs,
+            overrides,
+          });
+          if (evidence.authorized) return true;
+          const invalidatedAt = yield* nowIso;
+          for (const stale of evidence.staleRuns) {
+            yield* verificationRuns.value.invalidateRun({
+              verificationRunId: stale.id,
+              invalidatedAt,
+              reason: "The task worktree source changed after verification passed.",
+            });
+            const invalidated = yield* verificationRuns.value.getRunById({
+              verificationRunId: stale.id,
+            });
+            if (Option.isSome(invalidated)) {
+              yield* dispatch({
+                type: "verification.run.record",
+                commandId: commandId(
+                  detail.mission.id,
+                  `${task.id}:verification:invalidate:${stale.id}:${source.sourceFingerprint}`,
+                ),
+                run: invalidated.value,
+                action: "invalidated",
+                occurredAt: invalidatedAt,
+              });
+            }
+          }
+          return false;
+        }).pipe(Effect.result);
+
+        if (guarded._tag === "Failure" || !guarded.success) {
+          const requestedAt = yield* nowIso;
+          if (guarded._tag === "Success") {
+            yield* dispatch({
+              type: "verification.request",
+              commandId: commandId(
+                detail.mission.id,
+                `${task.id}:pre-integration-verification:${event.sequence}`,
+              ),
+              projectId: detail.mission.projectId,
+              missionId: detail.mission.id,
+              taskId: task.id,
+              worktreeId: taskWorktree.id,
+              profileId: requiredProfileId,
+              requestedBy: "system:integration-guard",
+              trigger: "before_integration",
+              requestedAt,
+            });
+          }
+          yield* dispatch({
+            type: "mission.integration.abort",
+            commandId: commandId(
+              detail.mission.id,
+              `${task.id}:verification-guard:${event.sequence}`,
+            ),
+            missionId: detail.mission.id,
+            taskId: task.id,
+            worktreeId: taskWorktree.id,
+            reason:
+              guarded._tag === "Failure"
+                ? `Required verification could not be validated: ${String(guarded.failure)}`
+                : "Required verification is missing, stale, failed, interrupted, cancelled, or invalidated for the current task source.",
+            requestedAt,
+          });
+          return;
+        }
+      }
+    }
     const taskStatus = yield* git.inspectWorktreeStatus({
       repositoryPath: taskWorktree.repositoryPath,
       worktreePath: taskWorktree.worktreePath,
@@ -948,6 +1094,7 @@ const make = Effect.gen(function* () {
               event.type === "mission.agent-permissions-updated" ||
               event.type === "task.created" ||
               event.type === "task.updated" ||
+              event.type === "task.implementation-completed" ||
               event.type === "task.completed" ||
               event.type === "task.failed" ||
               event.type === "task.retry-requested" ||
@@ -961,7 +1108,8 @@ const make = Effect.gen(function* () {
               event.type === "managed_worktree.status-updated" ||
               event.type === "managed_worktree.removal-requested" ||
               event.type === "integration.approved" ||
-              event.type === "integration.aborted")
+              event.type === "integration.aborted" ||
+              event.type === "verification.invalidated")
           ) {
             return worker.enqueue(event);
           }

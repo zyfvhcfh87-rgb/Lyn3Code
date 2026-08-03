@@ -108,6 +108,9 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import * as VerificationQuery from "./verification/VerificationQueryService.ts";
+import * as GitHubWorkspace from "./github/GitHubWorkspaceService.ts";
+import * as GitHubWorkflow from "./github/GitHubWorkflowService.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -358,6 +361,9 @@ const makeWsRpcLayer = (
       const crypto = yield* Crypto.Crypto;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+      const verificationQuery = yield* VerificationQuery.VerificationQueryService;
+      const githubWorkspace = yield* GitHubWorkspace.GitHubWorkspaceService;
+      const githubWorkflow = yield* GitHubWorkflow.GitHubWorkflowService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
@@ -1915,6 +1921,170 @@ const makeWsRpcLayer = (
               });
             }),
             { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.verificationGetProjectConfiguration]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.verificationGetProjectConfiguration,
+            verificationQuery.getProjectConfiguration(input.projectId),
+            { "rpc.aggregate": "verification" },
+          ),
+        [WS_METHODS.verificationListRuns]: (input) =>
+          observeRpcEffect(WS_METHODS.verificationListRuns, verificationQuery.listRuns(input), {
+            "rpc.aggregate": "verification",
+          }),
+        [WS_METHODS.verificationGetRunEvidence]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.verificationGetRunEvidence,
+            verificationQuery.getRunEvidence(input.verificationRunId),
+            { "rpc.aggregate": "verification" },
+          ),
+        [WS_METHODS.verificationGetTaskSummaries]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.verificationGetTaskSummaries,
+            verificationQuery.getTaskSummaries(input),
+            { "rpc.aggregate": "verification" },
+          ),
+        [WS_METHODS.verificationCompareRuns]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.verificationCompareRuns,
+            verificationQuery.compareRuns(input),
+            { "rpc.aggregate": "verification" },
+          ),
+        [WS_METHODS.verificationReadLog]: (input) =>
+          observeRpcEffect(WS_METHODS.verificationReadLog, verificationQuery.readLog(input), {
+            "rpc.aggregate": "verification",
+          }),
+        [WS_METHODS.verificationCreateArtifactUrl]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.verificationCreateArtifactUrl,
+            verificationQuery.createArtifactUrl(input),
+            { "rpc.aggregate": "verification" },
+          ),
+        [WS_METHODS.verificationSubscribeRun]: (input) =>
+          observeRpcStream(
+            WS_METHODS.verificationSubscribeRun,
+            Stream.concat(
+              Stream.fromEffect(verificationQuery.getRunEvidence(input.verificationRunId)),
+              orchestrationEngine.streamDomainEvents.pipe(
+                Stream.filter((event) => event.type.startsWith("verification.")),
+                Stream.mapEffect(() =>
+                  verificationQuery
+                    .getRunEvidence(input.verificationRunId)
+                    .pipe(Effect.retry({ times: 1 })),
+                ),
+              ),
+            ),
+            { "rpc.aggregate": "verification" },
+          ),
+        [WS_METHODS.githubListAccounts]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.githubListAccounts,
+            githubWorkspace.listAccounts(input.includeDisconnected),
+            { "rpc.aggregate": "github" },
+          ),
+        [WS_METHODS.githubConnectAccount]: (input) =>
+          observeRpcEffect(WS_METHODS.githubConnectAccount, githubWorkspace.connectAccount(input), {
+            "rpc.aggregate": "github",
+          }),
+        [WS_METHODS.githubDisconnectAccount]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.githubDisconnectAccount,
+            githubWorkspace.disconnectAccount(input.githubAccountId),
+            { "rpc.aggregate": "github" },
+          ),
+        [WS_METHODS.githubConnectRepository]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.githubConnectRepository,
+            githubWorkspace.connectRepository(input),
+            { "rpc.aggregate": "github" },
+          ),
+        [WS_METHODS.githubDisconnectRepository]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.githubDisconnectRepository,
+            githubWorkspace.disconnectRepository(input.repositoryConnectionId),
+            { "rpc.aggregate": "github" },
+          ),
+        [WS_METHODS.githubGetWorkspace]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.githubGetWorkspace,
+            githubWorkspace.getWorkspace(input.projectId),
+            { "rpc.aggregate": "github" },
+          ),
+        [WS_METHODS.githubListIssues]: (input) =>
+          observeRpcEffect(WS_METHODS.githubListIssues, githubWorkspace.listIssues(input), {
+            "rpc.aggregate": "github",
+          }),
+        [WS_METHODS.githubListPullRequests]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.githubListPullRequests,
+            githubWorkspace.listPullRequests(input),
+            { "rpc.aggregate": "github" },
+          ),
+        [WS_METHODS.githubGetPullRequest]: (input) =>
+          observeRpcEffect(WS_METHODS.githubGetPullRequest, githubWorkspace.getPullRequest(input), {
+            "rpc.aggregate": "github",
+          }),
+        [WS_METHODS.githubRefresh]: (input) =>
+          observeRpcEffect(WS_METHODS.githubRefresh, githubWorkspace.refresh(input), {
+            "rpc.aggregate": "github",
+          }),
+        [WS_METHODS.githubCreateMissionFromIssue]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.githubCreateMissionFromIssue,
+            githubWorkflow.createMissionFromIssue(input),
+            { "rpc.aggregate": "github" },
+          ),
+        [WS_METHODS.githubLinkIssueMission]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.githubLinkIssueMission,
+            githubWorkflow.linkIssueMission(input),
+            { "rpc.aggregate": "github" },
+          ),
+        [WS_METHODS.githubCreateReviewTask]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.githubCreateReviewTask,
+            githubWorkflow.createReviewTask(input),
+            { "rpc.aggregate": "github" },
+          ),
+        [WS_METHODS.githubPushBranch]: (input) =>
+          observeRpcEffect(WS_METHODS.githubPushBranch, githubWorkflow.pushBranch(input), {
+            "rpc.aggregate": "github",
+          }),
+        [WS_METHODS.githubCreatePullRequest]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.githubCreatePullRequest,
+            githubWorkflow.createPullRequest(input),
+            { "rpc.aggregate": "github" },
+          ),
+        [WS_METHODS.githubUpdatePullRequest]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.githubUpdatePullRequest,
+            githubWorkflow.updatePullRequest(input),
+            { "rpc.aggregate": "github" },
+          ),
+        [WS_METHODS.githubMarkReadyForReview]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.githubMarkReadyForReview,
+            githubWorkflow.markReadyForReview(input),
+            { "rpc.aggregate": "github" },
+          ),
+        [WS_METHODS.githubResolveReviewThread]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.githubResolveReviewThread,
+            githubWorkflow.resolveReviewThread(input),
+            { "rpc.aggregate": "github" },
+          ),
+        [WS_METHODS.githubSubscribeWorkspace]: (input) =>
+          observeRpcStream(
+            WS_METHODS.githubSubscribeWorkspace,
+            Stream.concat(
+              Stream.fromEffect(githubWorkspace.getWorkspace(input.projectId)),
+              githubWorkspace.changes.pipe(
+                Stream.filter((change) => change.projectId === input.projectId),
+                Stream.mapEffect(() => githubWorkspace.getWorkspace(input.projectId)),
+              ),
+            ),
+            { "rpc.aggregate": "github" },
           ),
         [WS_METHODS.subscribeVcsStatus]: (input) =>
           observeRpcStream(

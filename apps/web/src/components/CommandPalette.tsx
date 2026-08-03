@@ -142,6 +142,10 @@ import {
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 
+function renderGitHubWorkspaceIcon() {
+  return <GitHubIcon className={ITEM_ICON_CLASS} />;
+}
+
 function getLocalFileManagerName(platform: string): string {
   if (isMacPlatform(platform)) {
     return "Finder";
@@ -976,6 +980,28 @@ function OpenCommandPaletteDialog(props: {
     [contextualProjectRef, handleNewThread, pickerProjects, projectGroupByTargetKey],
   );
 
+  const githubWorkspaceItems = useMemo(
+    () =>
+      enumerateCommandPaletteItems(
+        buildProjectActionItems({
+          projects: pickerProjects,
+          valuePrefix: "github-workspace",
+          searchTerms: (project) => [project.title, project.workspaceRoot, "github"],
+          icon: renderGitHubWorkspaceIcon,
+          runProject: async (project) => {
+            await navigate({
+              to: "/github/$environmentId/$projectId",
+              params: {
+                environmentId: project.environmentId,
+                projectId: project.id,
+              },
+            });
+          },
+        }),
+      ),
+    [navigate, pickerProjects],
+  );
+
   const allThreadItems = useMemo(
     () =>
       buildThreadActionItems({
@@ -1475,6 +1501,26 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/missions" });
     },
   });
+
+  if (githubWorkspaceItems.length > 0) {
+    actionItems.push({
+      kind: "submenu",
+      value: "action:github-workspace",
+      searchTerms: [
+        "github",
+        "issues",
+        "pull requests",
+        "reviews",
+        "actions",
+        "checks",
+        "branches",
+      ],
+      title: "Open GitHub workspace",
+      icon: <GitHubIcon className={ITEM_ICON_CLASS} />,
+      addonIcon: <GitHubIcon className={ADDON_ICON_CLASS} />,
+      groups: [{ value: "github-projects", label: "Projects", items: githubWorkspaceItems }],
+    });
+  }
 
   actionItems.push({
     kind: "action",

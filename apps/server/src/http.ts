@@ -28,6 +28,8 @@ import { OtlpTracer } from "effect/unstable/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
+import { VerificationQueryService } from "./verification/VerificationQueryService.ts";
+import { VERIFICATION_ARTIFACT_ROUTE_PREFIX } from "./verification/VerificationArtifactAccess.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as HttpResponseCompression from "./httpCompression/HttpResponseCompression.ts";
@@ -275,6 +277,41 @@ export const assetRouteLayer = HttpRouter.add(
       headers: {
         "Cache-Control": "private, max-age=3600",
         "X-Content-Type-Options": "nosniff",
+      },
+    }).pipe(
+      Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
+    );
+  }),
+);
+
+export const verificationArtifactRouteLayer = HttpRouter.add(
+  "GET",
+  `${VERIFICATION_ARTIFACT_ROUTE_PREFIX}/*`,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
+    const suffix = url.value.pathname.slice(`${VERIFICATION_ARTIFACT_ROUTE_PREFIX}/`.length);
+    const separatorIndex = suffix.indexOf("/");
+    if (separatorIndex <= 0) return HttpServerResponse.text("Not Found", { status: 404 });
+    const verification = yield* VerificationQueryService;
+    const artifact = yield* verification.resolveArtifact(
+      suffix.slice(0, separatorIndex),
+      suffix.slice(separatorIndex + 1),
+    );
+    if (artifact === null) return HttpServerResponse.text("Not Found", { status: 404 });
+    const encodedName = encodeURIComponent(artifact.name).replace(
+      /[!'()*]/g,
+      (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+    );
+    return yield* HttpServerResponse.file(artifact.path, {
+      status: 200,
+      headers: {
+        "Cache-Control": "private, no-store",
+        "Content-Disposition": `attachment; filename="verification-artifact"; filename*=UTF-8''${encodedName}`,
+        "Content-Security-Policy": "sandbox; default-src 'none'",
+        "X-Content-Type-Options": "nosniff",
+        ...(artifact.mimeType === null ? {} : { "Content-Type": artifact.mimeType }),
       },
     }).pipe(
       Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),

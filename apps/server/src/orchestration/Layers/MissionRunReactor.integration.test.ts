@@ -14,6 +14,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnId,
+  VerificationProfileId,
   type AgentRun,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -36,7 +37,9 @@ import { ProjectionMissionTaskRepository } from "../../persistence/Services/Proj
 import { ProjectionMissionRepository } from "../../persistence/Services/ProjectionMissions.ts";
 import { ProjectionMissionTeamRepository } from "../../persistence/Services/ProjectionMissionTeams.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
+import { ProjectionVerificationConfigurationRepository } from "../../persistence/Services/ProjectionVerificationConfiguration.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
+import { ProjectionVerificationConfigurationRepositoryLive } from "../../persistence/Layers/ProjectionVerificationConfiguration.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { MissionGitService } from "../../mission-git/MissionGitService.ts";
 import { OrchestrationCommandInvariantError } from "../Errors.ts";
@@ -230,6 +233,7 @@ const TestLayer = MissionRunReactorLive.pipe(
   Layer.provideMerge(FakeServicesLive),
   Layer.provideMerge(FakeMissionGitLive),
   Layer.provideMerge(ProjectionProjectRepositoryLive),
+  Layer.provideMerge(ProjectionVerificationConfigurationRepositoryLive),
   Layer.provideMerge(SqlitePersistenceMemory),
 );
 
@@ -584,6 +588,72 @@ it.layer(TestLayer)("MissionRunReactor integration", (it) => {
 
         assert.equal(completion.agentRunId, runId);
         assert.equal(completion.completedAt, now);
+      }),
+    ),
+  );
+
+  it.effect("does not bypass accepted verification while profile projection catches up", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const reactor = yield* MissionRunReactor;
+        const harness = yield* MissionRunHarness;
+        const configurations = yield* ProjectionVerificationConfigurationRepository;
+        harness.reset();
+        yield* reactor.start();
+        yield* seedRun("running");
+        yield* configurations.upsertProjectSettings({
+          projectId,
+          configurationPath: "t3.json",
+          configurationSource: "repository",
+          acceptedConfigurationDigest: "accepted-digest",
+          acceptedAt: now,
+          acceptedBy: "tester",
+          defaultProfileId: VerificationProfileId.make("verification-profile:standard"),
+          preIntegrationProfileId: null,
+          automaticTaskVerificationEnabled: true,
+          maximumRepairAttempts: 2,
+          automaticRepairEnabled: false,
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        yield* harness.publishRuntime(providerTurnCompletedEvent("completed"));
+        const completion = yield* harness.awaitCommand("mission.agent-run.complete");
+
+        assert.equal(completion.requiresVerification, true);
+      }),
+    ),
+  );
+
+  it.effect("does not park a task when accepted verification is manual-only", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const reactor = yield* MissionRunReactor;
+        const harness = yield* MissionRunHarness;
+        const configurations = yield* ProjectionVerificationConfigurationRepository;
+        harness.reset();
+        yield* reactor.start();
+        yield* seedRun("running");
+        yield* configurations.upsertProjectSettings({
+          projectId,
+          configurationPath: "t3.json",
+          configurationSource: "repository",
+          acceptedConfigurationDigest: "accepted-digest",
+          acceptedAt: now,
+          acceptedBy: "tester",
+          defaultProfileId: VerificationProfileId.make("verification-profile:standard"),
+          preIntegrationProfileId: null,
+          automaticTaskVerificationEnabled: false,
+          maximumRepairAttempts: 2,
+          automaticRepairEnabled: false,
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        yield* harness.publishRuntime(providerTurnCompletedEvent("completed"));
+        const completion = yield* harness.awaitCommand("mission.agent-run.complete");
+
+        assert.equal(completion.requiresVerification, false);
       }),
     ),
   );

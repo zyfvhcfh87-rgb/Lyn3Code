@@ -63,6 +63,46 @@ function commandToAggregateRef(command: OrchestrationCommand): {
         aggregateKind: "project",
         aggregateId: command.projectId,
       };
+    case "verification.profile.record":
+      return {
+        aggregateKind: "project",
+        aggregateId: command.profile.projectId,
+      };
+    case "verification.settings.update":
+      return {
+        aggregateKind: "project",
+        aggregateId: command.settings.projectId,
+      };
+    case "verification.run.record":
+      return command.run.missionId === null
+        ? { aggregateKind: "project", aggregateId: command.run.projectId }
+        : { aggregateKind: "mission", aggregateId: command.run.missionId };
+    case "verification.request":
+    case "verification.request.reject":
+    case "verification.cancel":
+    case "verification.gate.record":
+    case "verification.check.record":
+    case "verification.check.output.record":
+    case "verification.diagnostic.record":
+    case "verification.artifact.record":
+      return command.missionId === null
+        ? { aggregateKind: "project", aggregateId: command.projectId }
+        : { aggregateKind: "mission", aggregateId: command.missionId };
+    case "verification.repair.request":
+    case "verification.repair.record":
+      return { aggregateKind: "mission", aggregateId: command.missionId };
+    case "verification.override.request":
+      return command.missionId === null
+        ? { aggregateKind: "project", aggregateId: command.projectId }
+        : { aggregateKind: "mission", aggregateId: command.missionId };
+    case "verification.override.apply":
+      return command.override.missionId === null
+        ? { aggregateKind: "project", aggregateId: command.override.projectId }
+        : { aggregateKind: "mission", aggregateId: command.override.missionId };
+    case "github.event.record":
+      return command.payload.missionId === null
+        ? { aggregateKind: "project", aggregateId: command.payload.projectId }
+        : { aggregateKind: "mission", aggregateId: command.payload.missionId };
     case "mission.create":
     case "mission.update":
     case "mission.task.create":

@@ -21,11 +21,38 @@ describe("T3ProjectFile", () => {
         },
         { name: "Test", command: "pnpm test" },
       ],
+      verification: {
+        version: 1,
+        defaultProfile: "fast",
+        profiles: {
+          fast: {
+            gates: [
+              {
+                id: "types",
+                category: "typecheck",
+                checks: [
+                  {
+                    id: "web-types",
+                    name: "Web typecheck",
+                    command: { executable: "pnpm", args: ["run", "typecheck:web"] },
+                    workingDirectory: ".",
+                    timeoutSeconds: 300,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
     });
 
     expect(decoded.iconPath).toBe("assets/logo.svg");
     expect(decoded.scripts).toHaveLength(2);
     expect(decoded.scripts?.[1]).toEqual({ name: "Test", command: "pnpm test" });
+    expect(decoded.verification?.profiles.fast?.gates[0]?.checks[0]?.command).toEqual({
+      executable: "pnpm",
+      args: ["run", "typecheck:web"],
+    });
   });
 
   it("decodes an empty object and ignores unknown fields", () => {
@@ -51,5 +78,27 @@ describe("T3ProjectFile", () => {
     expect(() =>
       decode({ scripts: [{ name: "Dev", command: "pnpm dev", icon: "rocket" }] }),
     ).toThrow();
+  });
+
+  it("rejects shell-string verification commands and unsupported config versions", () => {
+    expect(() =>
+      decode({
+        verification: {
+          version: 1,
+          profiles: {
+            fast: {
+              gates: [
+                {
+                  id: "lint",
+                  category: "lint",
+                  checks: [{ id: "lint", name: "Lint", command: "pnpm lint" }],
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ).toThrow();
+    expect(() => decode({ verification: { version: 2, profiles: {} } })).toThrow();
   });
 });

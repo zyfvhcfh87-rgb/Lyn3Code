@@ -35,7 +35,9 @@ const selectAgentRunColumns = `
   worktree_id AS "worktreeId",
   attempt_number AS "attemptNumber",
   permissions_json AS "permissions",
-  write_capable AS "writeCapable"
+  write_capable AS "writeCapable",
+  purpose,
+  repair_attempt_id AS "repairAttemptId"
 `;
 
 const ProjectionAgentRunDbRow = ProjectionAgentRun.mapFields(
@@ -75,7 +77,9 @@ const makeProjectionAgentRunRepository = Effect.gen(function* () {
           worktree_id,
           attempt_number,
           permissions_json,
-          write_capable
+          write_capable,
+          purpose,
+          repair_attempt_id
         ) VALUES (
           ${row.id},
           ${row.missionId},
@@ -94,7 +98,9 @@ const makeProjectionAgentRunRepository = Effect.gen(function* () {
           ${row.worktreeId},
           ${row.attemptNumber},
           ${JSON.stringify(row.permissions)},
-          ${row.writeCapable ? 1 : 0}
+          ${row.writeCapable ? 1 : 0},
+          ${row.purpose ?? "implementation"},
+          ${row.repairAttemptId ?? null}
         )
         ON CONFLICT (agent_run_id)
         DO UPDATE SET
@@ -114,7 +120,9 @@ const makeProjectionAgentRunRepository = Effect.gen(function* () {
           worktree_id = excluded.worktree_id,
           attempt_number = excluded.attempt_number,
           permissions_json = excluded.permissions_json,
-          write_capable = excluded.write_capable
+          write_capable = excluded.write_capable,
+          purpose = excluded.purpose,
+          repair_attempt_id = excluded.repair_attempt_id
       `,
   });
 

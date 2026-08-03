@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
 import {
   isActiveAgentRunStatus,
@@ -6,6 +7,7 @@ import {
   type AgentRole,
   type AgentRun,
   type AgentRunId,
+  type EnvironmentId,
   type ManagedWorktree,
   type ManagedWorktreeId,
   type Mission,
@@ -16,7 +18,11 @@ import {
   type MissionTeamSettings,
   type OrchestrationEvent,
   type TaskDependency,
+  type VerificationRunId,
+  type VerificationTaskSummary,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/unstable/reactivity";
 import {
   ArrowLeftIcon,
   CircleAlertIcon,
@@ -45,6 +51,9 @@ import {
 import { MissionTimeline } from "./MissionTimeline";
 import { missionEventTimelineItems } from "./MissionTimeline.logic";
 import { MissionWorktreePanel } from "./MissionWorktreePanel";
+import { MissionVerificationPanel } from "../verification/MissionVerificationPanel";
+import { VerificationRunDialog } from "../verification/VerificationRunDialog";
+import { verificationEnvironment } from "../../state/verification";
 
 const STARTABLE_MISSION_STATUSES = new Set<Mission["status"]>(["backlog", "planning", "ready"]);
 
@@ -88,8 +97,9 @@ export function MissionWorkspace({
   onApproveIntegration,
   onAbortIntegration,
   onRemoveWorktree,
+  onRequestVerification,
 }: {
-  readonly environmentId: string;
+  readonly environmentId: EnvironmentId;
   readonly projectTitle: string;
   readonly mission: Mission;
   readonly tasks: ReadonlyArray<MissionTask>;
@@ -148,8 +158,20 @@ export function MissionWorkspace({
   readonly onApproveIntegration: (taskId: MissionTaskId) => Promise<void>;
   readonly onAbortIntegration: (taskId: MissionTaskId) => Promise<void>;
   readonly onRemoveWorktree: (worktreeId: ManagedWorktreeId) => Promise<void>;
+  readonly onRequestVerification: (taskId: MissionTaskId) => Promise<void>;
 }) {
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
+  const [openVerificationRunId, setOpenVerificationRunId] = useState<VerificationRunId | null>(
+    null,
+  );
+  const verificationResult = useAtomValue(
+    verificationEnvironment.taskSummariesAtom({
+      environmentId,
+      input: { projectId: mission.projectId, taskIds: tasks.map((task) => task.id) },
+    }),
+  );
+  const verificationSummaries: ReadonlyArray<VerificationTaskSummary> =
+    Option.getOrNull(AsyncResult.value(verificationResult)) ?? [];
   const activeRuns = agentRuns.filter((run) => isActiveAgentRunStatus(run.status));
   const canStart = STARTABLE_MISSION_STATUSES.has(mission.status);
 
@@ -281,6 +303,15 @@ export function MissionWorkspace({
               onCancel={onCancelRun}
             />
 
+            <MissionVerificationPanel
+              tasks={tasks}
+              summaries={verificationSummaries}
+              canMutate={canMutate}
+              isPending={isPending}
+              onRequest={onRequestVerification}
+              onOpenRun={setOpenVerificationRunId}
+            />
+
             <MissionWorktreePanel
               worktrees={managedWorktrees}
               tasks={tasks}
@@ -298,6 +329,7 @@ export function MissionWorkspace({
               mission={mission}
               tasks={tasks}
               dependencies={taskDependencies}
+              verificationSummaries={verificationSummaries}
               worktrees={managedWorktrees}
               canMutate={canMutate}
               isPending={isPending}
@@ -323,6 +355,15 @@ export function MissionWorkspace({
           </aside>
         </main>
       </ScrollArea>
+
+      <VerificationRunDialog
+        environmentId={environmentId}
+        runId={openVerificationRunId}
+        canMutate={canMutate}
+        onOpenChange={(open) => {
+          if (!open) setOpenVerificationRunId(null);
+        }}
+      />
 
       <CreateTaskDialog
         open={taskDialogOpen}

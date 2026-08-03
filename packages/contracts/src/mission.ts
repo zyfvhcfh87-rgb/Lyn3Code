@@ -15,6 +15,7 @@ import {
   TaskDependencyId,
   ThreadId,
   TrimmedNonEmptyString,
+  VerificationRepairAttemptId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
@@ -270,12 +271,16 @@ export const MissionTaskStatus = Schema.Literals([
   "backlog",
   "ready",
   "running",
+  "verification",
   "blocked",
   "completed",
   "cancelled",
   "failed",
 ]);
 export type MissionTaskStatus = typeof MissionTaskStatus.Type;
+
+export const AgentRunPurpose = Schema.Literals(["implementation", "verification_repair"]);
+export type AgentRunPurpose = typeof AgentRunPurpose.Type;
 
 export const AgentRunStatus = Schema.Literals([
   "starting",
@@ -363,6 +368,8 @@ export const AgentRun = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(ALL_AGENT_PERMISSIONS)),
   ),
   writeCapable: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  purpose: Schema.optional(AgentRunPurpose),
+  repairAttemptId: Schema.optional(Schema.NullOr(VerificationRepairAttemptId)),
 });
 export type AgentRun = typeof AgentRun.Type;
 
@@ -405,7 +412,7 @@ const missionTransitions: Readonly<Record<MissionStatus, ReadonlySet<MissionStat
   verification: new Set(["running", "review", "blocked", "completed", "cancelled", "failed"]),
   review: new Set(["running", "verification", "blocked", "completed", "cancelled", "failed"]),
   blocked: new Set(["planning", "ready", "running", "cancelled", "failed"]),
-  completed: new Set(),
+  completed: new Set(["verification"]),
   cancelled: new Set(),
   failed: new Set(["planning", "ready", "running", "cancelled"]),
 };
@@ -413,9 +420,10 @@ const missionTransitions: Readonly<Record<MissionStatus, ReadonlySet<MissionStat
 const taskTransitions: Readonly<Record<MissionTaskStatus, ReadonlySet<MissionTaskStatus>>> = {
   backlog: new Set(["ready", "running", "blocked", "cancelled"]),
   ready: new Set(["backlog", "running", "blocked", "cancelled", "failed"]),
-  running: new Set(["ready", "blocked", "completed", "cancelled", "failed"]),
-  blocked: new Set(["ready", "running", "cancelled", "failed"]),
-  completed: new Set(),
+  running: new Set(["ready", "verification", "blocked", "completed", "cancelled", "failed"]),
+  verification: new Set(["running", "blocked", "completed", "cancelled", "failed"]),
+  blocked: new Set(["ready", "running", "verification", "cancelled", "failed"]),
+  completed: new Set(["verification"]),
   cancelled: new Set(),
   failed: new Set(["ready", "running", "cancelled"]),
 };

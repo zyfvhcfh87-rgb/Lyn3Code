@@ -70,6 +70,11 @@ export type RequestMissionIntegrationInput = CommandInput<"mission.integration.r
 export type ApproveMissionIntegrationInput = CommandInput<"mission.integration.approve">;
 export type AbortMissionIntegrationInput = CommandInput<"mission.integration.abort">;
 export type RemoveMissionWorktreeInput = CommandInput<"mission.worktree.remove">;
+export type RequestVerificationInput = CommandInput<"verification.request">;
+export type CancelVerificationInput = CommandInput<"verification.cancel">;
+export type RequestVerificationRepairInput = CommandInput<"verification.repair.request">;
+export type RequestVerificationOverrideInput = CommandInput<"verification.override.request">;
+export type UpdateVerificationSettingsInput = CommandInput<"verification.settings.update">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -104,6 +109,56 @@ function timestampedCommandMetadata(input: {
 function dispatch(command: ClientOrchestrationCommand) {
   return request(ORCHESTRATION_WS_METHODS.dispatchCommand, command);
 }
+
+export const requestVerification: (input: RequestVerificationInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.requestVerification",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "verification.request",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const cancelVerification: (input: CancelVerificationInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.cancelVerification",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "verification.cancel",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const requestVerificationRepair: (input: RequestVerificationRepairInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.requestVerificationRepair")(function* (input) {
+    return yield* dispatch({
+      ...input,
+      type: "verification.repair.request",
+      commandId: yield* commandId(input),
+    });
+  });
+
+export const requestVerificationOverride: (
+  input: RequestVerificationOverrideInput,
+) => CommandEffect = Effect.fn("EnvironmentCommands.requestVerificationOverride")(
+  function* (input) {
+    return yield* dispatch({
+      ...input,
+      type: "verification.override.request",
+      commandId: yield* commandId(input),
+    });
+  },
+);
+
+export const updateVerificationSettings: (input: UpdateVerificationSettingsInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.updateVerificationSettings")(function* (input) {
+    return yield* dispatch({
+      ...input,
+      type: "verification.settings.update",
+      commandId: yield* commandId(input),
+    });
+  });
 
 export const createProject: (input: CreateProjectInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.createProject",

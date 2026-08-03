@@ -11,6 +11,7 @@
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -50,6 +51,8 @@ import Migration0034 from "./Migrations/034_ProjectionThreadsSnoozed.ts";
 import Migration0035 from "./Migrations/035_ProjectionThreadTitleRegeneration.ts";
 import Migration0036 from "./Migrations/036_MissionFoundation.ts";
 import Migration0037 from "./Migrations/037_MissionTeamsAndWorktrees.ts";
+import Migration0038 from "./Migrations/038_AutomatedVerification.ts";
+import Migration0039 from "./Migrations/039_GitHubWorkspace.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -99,6 +102,8 @@ export const migrationEntries = [
   [35, "ProjectionThreadTitleRegeneration", Migration0035],
   [36, "MissionFoundation", Migration0036],
   [37, "MissionTeamsAndWorktrees", Migration0037],
+  [38, "AutomatedVerification", Migration0038],
+  [39, "GitHubWorkspace", Migration0039],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -117,6 +122,143 @@ export const makeMigrationLoader = (throughId?: number) =>
  * Uses the base Migrator.make without platform dependencies
  */
 const run = Migrator.make({});
+const AUTOMATED_VERIFICATION_MIGRATION_ID = 38;
+
+/**
+ * SQLite cannot disable foreign keys while Effect Migrator's transaction is
+ * active. Phase 3 extends the mission-task status CHECK and the task table is
+ * part of a circular task/worktree relationship, so the supported table-copy
+ * rebuild has to run between migration transactions with foreign keys disabled.
+ *
+ * The preparation is idempotent: if the rebuilt schema is already present it
+ * does nothing, allowing a failed 038 body to be retried safely.
+ */
+const prepareAutomatedVerificationMigration = Effect.fn("prepareAutomatedVerificationMigration")(
+  function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const taskTable = yield* sql<{ readonly sql: string | null }>`
+    SELECT sql
+    FROM sqlite_master
+    WHERE type = 'table' AND name = 'projection_mission_tasks'
+  `;
+    const createSql = taskTable[0]?.sql ?? null;
+    if (createSql === null || createSql.includes("'verification'")) {
+      return;
+    }
+
+    yield* sql`PRAGMA foreign_keys = OFF`;
+    const foreignKeys = yield* sql<{ readonly foreign_keys: number }>`PRAGMA foreign_keys`;
+    if (foreignKeys[0]?.foreign_keys !== 0) {
+      return yield* Effect.die("Could not disable SQLite foreign keys for Phase 3 task migration");
+    }
+
+    yield* sql
+      .withTransaction(
+        Effect.gen(function* () {
+          yield* sql`
+          CREATE TABLE projection_mission_tasks_v38 (
+            task_id TEXT PRIMARY KEY,
+            mission_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (
+              status IN (
+                'backlog', 'ready', 'running', 'verification', 'blocked',
+                'completed', 'cancelled', 'failed'
+              )
+            ),
+            position INTEGER NOT NULL CHECK (position >= 0),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            started_at TEXT,
+            completed_at TEXT,
+            assigned_mission_agent_id TEXT REFERENCES projection_mission_agents(mission_agent_id)
+              ON UPDATE CASCADE ON DELETE SET NULL,
+            worktree_id TEXT REFERENCES projection_managed_worktrees(managed_worktree_id)
+              ON UPDATE CASCADE ON DELETE SET NULL,
+            attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+            maximum_attempts INTEGER NOT NULL DEFAULT 3 CHECK (maximum_attempts > 0),
+            ready_at TEXT,
+            blocked_reason TEXT,
+            integration_status TEXT NOT NULL DEFAULT 'not_requested' CHECK (
+              integration_status IN (
+                'not_requested', 'pending', 'ready', 'integrating', 'integrated',
+                'conflicted', 'failed'
+              )
+            ),
+            requires_dependency_handoffs INTEGER NOT NULL DEFAULT 1 CHECK (
+              requires_dependency_handoffs IN (0, 1)
+            ),
+            implementation_completed_at TEXT,
+            verification_status TEXT NOT NULL DEFAULT 'not_required' CHECK (
+              verification_status IN (
+                'not_required', 'pending', 'queued', 'running', 'failed', 'passed',
+                'passed_with_warnings', 'cancelled', 'interrupted', 'invalidated', 'overridden'
+              )
+            ),
+            verification_required INTEGER NOT NULL DEFAULT 0 CHECK (
+              verification_required IN (0, 1)
+            ),
+            latest_verification_run_id TEXT,
+            verification_profile_id TEXT,
+            verification_override_id TEXT,
+            UNIQUE (mission_id, task_id),
+            FOREIGN KEY (mission_id) REFERENCES projection_missions(mission_id)
+              ON UPDATE CASCADE ON DELETE CASCADE
+          )
+        `;
+          yield* sql`
+          INSERT INTO projection_mission_tasks_v38 (
+            task_id, mission_id, title, description, status, position, created_at, updated_at,
+            started_at, completed_at, assigned_mission_agent_id, worktree_id, attempt_count,
+            maximum_attempts, ready_at, blocked_reason, integration_status,
+            requires_dependency_handoffs, implementation_completed_at, verification_status,
+            verification_required, latest_verification_run_id, verification_profile_id,
+            verification_override_id
+          )
+          SELECT
+            task_id, mission_id, title, description, status, position, created_at, updated_at,
+            started_at, completed_at, assigned_mission_agent_id, worktree_id, attempt_count,
+            maximum_attempts, ready_at, blocked_reason, integration_status,
+            requires_dependency_handoffs, NULL, 'not_required', 0, NULL, NULL, NULL
+          FROM projection_mission_tasks
+        `;
+          yield* sql`DROP TABLE projection_mission_tasks`;
+          yield* sql`ALTER TABLE projection_mission_tasks_v38 RENAME TO projection_mission_tasks`;
+          yield* sql`
+          CREATE INDEX idx_projection_mission_tasks_mission_position
+          ON projection_mission_tasks(mission_id, position, task_id)
+        `;
+          yield* sql`
+          CREATE INDEX idx_projection_mission_tasks_mission_status
+          ON projection_mission_tasks(mission_id, status, updated_at DESC)
+        `;
+          yield* sql`
+          CREATE INDEX idx_projection_mission_tasks_verification_status
+          ON projection_mission_tasks(mission_id, verification_status, updated_at DESC)
+        `;
+          yield* sql`
+          CREATE INDEX idx_projection_mission_tasks_latest_verification
+          ON projection_mission_tasks(latest_verification_run_id)
+          WHERE latest_verification_run_id IS NOT NULL
+        `;
+        }),
+      )
+      .pipe(Effect.ensuring(sql`PRAGMA foreign_keys = ON`.pipe(Effect.orDie)));
+
+    const foreignKeyErrors = yield* sql<{
+      readonly table: string;
+      readonly rowid: number;
+      readonly parent: string;
+      readonly fkid: number;
+    }>`PRAGMA foreign_key_check`;
+    if (foreignKeyErrors.length > 0) {
+      return yield* Effect.die(
+        `Phase 3 task migration left ${foreignKeyErrors.length} foreign key violation(s)`,
+      );
+    }
+  },
+);
 
 export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
@@ -135,7 +277,22 @@ export interface RunMigrationsOptions {
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
-  const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
+  const includesAutomatedVerification =
+    toMigrationInclusive === undefined ||
+    toMigrationInclusive >= AUTOMATED_VERIFICATION_MIGRATION_ID;
+  const beforeAutomatedVerification = includesAutomatedVerification
+    ? yield* run({ loader: makeMigrationLoader(AUTOMATED_VERIFICATION_MIGRATION_ID - 1) })
+    : [];
+  if (includesAutomatedVerification) {
+    yield* prepareAutomatedVerificationMigration();
+  }
+  const afterAutomatedVerification = yield* run({
+    loader: makeMigrationLoader(toMigrationInclusive),
+  });
+  const executedMigrations = [
+    ...beforeAutomatedVerification,
+    ...afterAutomatedVerification,
+  ] as ReadonlyArray<readonly [number, string]>;
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")

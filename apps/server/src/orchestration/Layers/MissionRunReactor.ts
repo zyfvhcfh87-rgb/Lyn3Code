@@ -25,6 +25,8 @@ import { ProjectionAgentRunRepository } from "../../persistence/Services/Project
 import { ProjectionMissionRepository } from "../../persistence/Services/ProjectionMissions.ts";
 import { ProjectionMissionTaskRepository } from "../../persistence/Services/ProjectionMissionTasks.ts";
 import { ProjectionMissionTeamRepository } from "../../persistence/Services/ProjectionMissionTeams.ts";
+import { ProjectionVerificationRunRepository } from "../../persistence/Services/ProjectionVerificationRuns.ts";
+import { ProjectionVerificationConfigurationRepository } from "../../persistence/Services/ProjectionVerificationConfiguration.ts";
 import { ProjectionAgentRunRepositoryLive } from "../../persistence/Layers/ProjectionAgentRuns.ts";
 import { ProjectionMissionRepositoryLive } from "../../persistence/Layers/ProjectionMissions.ts";
 import { ProjectionMissionTaskRepositoryLive } from "../../persistence/Layers/ProjectionMissionTasks.ts";
@@ -58,6 +60,7 @@ const formatMissionPrompt = (input: {
   readonly missionId: string;
   readonly missionTitle: string;
   readonly missionDescription: string;
+  readonly purpose: AgentRun["purpose"];
   readonly taskId: string | null;
   readonly taskTitle: string | null;
   readonly taskDescription: string | null;
@@ -65,7 +68,8 @@ const formatMissionPrompt = (input: {
   readonly permissions: ReadonlyArray<string>;
   readonly worktreePath: string | null;
   readonly dependencyHandoffs: ReadonlyArray<string>;
-}) => `# Mission execution
+  readonly repairEvidence: string | null;
+}) => `# ${input.purpose === "verification_repair" ? "Bounded verification repair" : "Mission execution"}
 
 Project ID: ${input.projectId}
 Mission ID: ${input.missionId}
@@ -77,6 +81,12 @@ ${
   input.taskId === null
     ? "Execute the mission as a single focused run."
     : `Task ID: ${input.taskId}\nTask: ${input.taskTitle ?? "Untitled task"}\n\n${input.taskDescription ?? ""}`
+}
+
+${
+  input.purpose === "verification_repair"
+    ? `This is a bounded repair attempt. Address only the reported verification failures and their direct root cause. Do not broaden product scope, integrate branches, or weaken verification configuration to make checks disappear. Preserve the prior failed run and report any required configuration change for human review.\n\nFocused verification evidence:\n${input.repairEvidence ?? "The focused evidence record is unavailable; inspect the referenced failed run before editing."}`
+    : ""
 }
 
 ${input.role === null ? "" : `Role: ${input.role}\nPermissions: ${input.permissions.join(", ") || "none"}`}
@@ -96,6 +106,10 @@ const make = Effect.gen(function* () {
   const taskRepository = yield* ProjectionMissionTaskRepository;
   const runRepository = yield* ProjectionAgentRunRepository;
   const teamRepository = yield* ProjectionMissionTeamRepository;
+  const verificationRuns = yield* Effect.serviceOption(ProjectionVerificationRunRepository);
+  const verificationConfigurations = yield* Effect.serviceOption(
+    ProjectionVerificationConfigurationRepository,
+  );
   const gitService = yield* Effect.serviceOption(MissionGitService);
 
   const dispatch = (command: OrchestrationCommand) => engine.dispatch(command).pipe(Effect.asVoid);
@@ -260,11 +274,35 @@ const make = Effect.gen(function* () {
     }))
       .filter((handoff) => predecessorIds.has(handoff.taskId))
       .map((handoff) => `${handoff.taskId}: ${handoff.summary}`);
+    const repairEvidence =
+      run.purpose !== "verification_repair" ||
+      run.repairAttemptId === undefined ||
+      run.repairAttemptId === null ||
+      Option.isNone(verificationRuns)
+        ? null
+        : yield* verificationRuns.value
+            .getRepairAttemptById({ repairAttemptId: run.repairAttemptId })
+            .pipe(
+              Effect.map(
+                Option.match({
+                  onNone: () => null,
+                  onSome: (attempt) =>
+                    [
+                      attempt.failureSnapshot.summary,
+                      `Failed checks: ${attempt.failureSnapshot.failedCheckRunIds.join(", ") || "none recorded"}`,
+                      `Diagnostics: ${attempt.failureSnapshot.diagnosticIds.join(", ") || "none recorded"}`,
+                      `Durable logs: ${attempt.failureSnapshot.logReferences.join(", ") || "none recorded"}`,
+                    ].join("\n"),
+                }),
+              ),
+              Effect.orElseSucceed(() => null),
+            );
     const prompt = formatMissionPrompt({
       projectId: mission.value.projectId,
       missionId: mission.value.id,
       missionTitle: mission.value.title,
       missionDescription: mission.value.description,
+      purpose: run.purpose,
       taskId: run.taskId,
       taskTitle: Option.isSome(task) ? task.value.title : null,
       taskDescription: Option.isSome(task) ? task.value.description : null,
@@ -272,6 +310,7 @@ const make = Effect.gen(function* () {
       permissions: run.permissions,
       worktreePath: Option.isSome(worktree) ? worktree.value.worktreePath : null,
       dependencyHandoffs,
+      repairEvidence,
     });
 
     yield* dispatch({
@@ -447,11 +486,25 @@ const make = Effect.gen(function* () {
           "completed",
           "The task run completed. Changed-file claims were reconciled against Git.",
         );
+        const mission = yield* missionRepository.getById({ missionId: current.missionId });
+        const settings =
+          Option.isNone(mission) || Option.isNone(verificationConfigurations)
+            ? Option.none()
+            : yield* verificationConfigurations.value.getProjectSettings({
+                projectId: mission.value.projectId,
+              });
+        const requiresVerification =
+          current.purpose !== "verification_repair" &&
+          Option.isSome(settings) &&
+          settings.value.automaticTaskVerificationEnabled &&
+          settings.value.acceptedConfigurationDigest !== null &&
+          settings.value.defaultProfileId !== null;
         yield* dispatch({
           type: "mission.agent-run.complete",
           commandId: commandId(current.id, "completed"),
           missionId: current.missionId,
           agentRunId: current.id,
+          requiresVerification,
           completedAt: event.createdAt,
         });
         return;

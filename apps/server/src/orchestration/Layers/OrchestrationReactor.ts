@@ -13,6 +13,7 @@ import { MissionRunReactor } from "../Services/MissionRunReactor.ts";
 import { MissionSchedulerReactor } from "../Services/MissionSchedulerReactor.ts";
 import { MissionWorktreeReactor } from "../Services/MissionWorktreeReactor.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
+import { VerificationOrchestrationReactor } from "../Services/VerificationOrchestrationReactor.ts";
 import * as AgentAwarenessRelay from "../../relay/AgentAwarenessRelay.ts";
 
 export const makeOrchestrationReactor = Effect.gen(function* () {
@@ -23,6 +24,9 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
   const missionRunReactor = yield* Effect.serviceOption(MissionRunReactor);
   const missionSchedulerReactor = yield* Effect.serviceOption(MissionSchedulerReactor);
   const missionWorktreeReactor = yield* Effect.serviceOption(MissionWorktreeReactor);
+  const verificationOrchestrationReactor = yield* Effect.serviceOption(
+    VerificationOrchestrationReactor,
+  );
   const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
 
   const start: OrchestrationReactorShape["start"] = Effect.fn("start")(function* () {
@@ -35,6 +39,9 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
     }
     if (Option.isSome(missionRunReactor)) {
       yield* missionRunReactor.value.start();
+    }
+    if (Option.isSome(verificationOrchestrationReactor)) {
+      yield* verificationOrchestrationReactor.value.start();
     }
     if (Option.isSome(missionSchedulerReactor)) {
       yield* missionSchedulerReactor.value.start();

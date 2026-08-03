@@ -71,6 +71,7 @@ import {
   MissionTaskUpdatedPayload,
   MissionTeamConfiguredPayload,
   MissionUpdatedPayload,
+  VerificationRunLifecyclePayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -999,6 +1000,7 @@ export function projectEvent(
       );
 
     case "task.started":
+    case "task.implementation-completed":
     case "task.completed":
     case "task.cancelled":
     case "task.failed":
@@ -1009,16 +1011,51 @@ export function projectEvent(
             status:
               event.type === "task.started"
                 ? "running"
-                : event.type === "task.completed"
-                  ? "completed"
-                  : event.type === "task.cancelled"
-                    ? "cancelled"
-                    : "failed",
+                : event.type === "task.implementation-completed"
+                  ? "verification"
+                  : event.type === "task.completed"
+                    ? "completed"
+                    : event.type === "task.cancelled"
+                      ? "cancelled"
+                      : "failed",
             ...(event.type === "task.started" ? { startedAt: payload.occurredAt } : {}),
             ...(event.type === "task.completed" ? { completedAt: payload.occurredAt } : {}),
             updatedAt: payload.occurredAt,
           }),
         })),
+      );
+
+    case "verification.invalidated":
+      return decodeForEvent(
+        VerificationRunLifecyclePayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const taskId = payload.run.taskId;
+          const task =
+            taskId === null
+              ? undefined
+              : nextBase.missionTasks.find((candidate) => candidate.id === taskId);
+          if (task === undefined || task.integrationStatus === "integrated") return nextBase;
+          const mission = nextBase.missions.find((candidate) => candidate.id === task.missionId);
+          return {
+            ...nextBase,
+            missionTasks: updateMissionTask(nextBase.missionTasks, task.id, {
+              status: "verification",
+              integrationStatus: "not_requested",
+              updatedAt: payload.occurredAt,
+            }),
+            missions:
+              task.missionId === payload.run.missionId && mission?.status === "completed"
+                ? updateMission(nextBase.missions, task.missionId, {
+                    status: "verification",
+                    updatedAt: payload.occurredAt,
+                  })
+                : nextBase.missions,
+          };
+        }),
       );
 
     case "mission.team-configured":
