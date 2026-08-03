@@ -15,6 +15,7 @@ const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
 const BODY_PREVIEW_LENGTH = 8_000;
 const SUMMARY_LENGTH = 4_000;
+const PATCH_LENGTH = 65_536;
 
 export type GitHubApiOperation =
   | "validateAccount"
@@ -1497,6 +1498,13 @@ export const make = Effect.gen(function* () {
   const mapResult = <A, B>(result: GitHubApiResult<A>, map: (value: A) => B): GitHubApiResult<B> =>
     result.notModified ? result : { ...result, data: map(result.data) };
 
+  const cursorMatchesBase = (cursorPath: string, base: string) => {
+    if (cursorPath === base) return true;
+    const repositoryResource = /^repos\/[^/]+\/[^/]+\/(.+)$/u.exec(base)?.[1];
+    const canonicalRepositoryResource = /^repositories\/\d+\/(.+)$/u.exec(cursorPath)?.[1];
+    return repositoryResource !== undefined && canonicalRepositoryResource === repositoryResource;
+  };
+
   const pageEndpoint = (
     base: string,
     input: PageInput,
@@ -1504,7 +1512,7 @@ export const make = Effect.gen(function* () {
   ) => {
     const cursor = input.cursor?.trim();
     const cursorPath = cursor?.split("?", 1)[0]?.replace(/^\/+/, "");
-    return cursor && cursorPath === base
+    return cursor && cursorPath && cursorMatchesBase(cursorPath, base)
       ? cursor
       : addQuery(base, { per_page: normalizePageSize(input.pageSize), ...extra });
   };
@@ -1732,7 +1740,7 @@ export const make = Effect.gen(function* () {
               previousPath: file.previous_filename ?? null,
               blobUrl: file.blob_url ?? null,
               rawUrl: file.raw_url ?? null,
-              patch: file.patch ?? null,
+              patch: file.patch == null || file.patch.length > PATCH_LENGTH ? null : file.patch,
             })),
             pageInfo: pageInfoFromResult(result, input.hostname, null),
           })),
@@ -1822,7 +1830,7 @@ export const make = Effect.gen(function* () {
         method: "POST",
         headers: { Accept: DEFAULT_ACCEPT },
         body: {
-          query: `query T3ReviewThreads($owner: String!, $repository: String!, $number: Int!, $first: Int!, $after: String) { repository(owner: $owner, name: $repository) { pullRequest(number: $number) { reviewThreads(first: $first, after: $after) { totalCount pageInfo { endCursor hasNextPage } nodes { id path line originalLine diffSide isResolved isOutdated comments(first: 100) { totalCount pageInfo { endCursor hasNextPage } nodes { id databaseId body path line originalLine diffSide author { login avatarUrl url } commit { oid } url createdAt updatedAt pullRequestReview { databaseId } } } } } } } }`,
+          query: `query T3ReviewThreads($owner: String!, $repository: String!, $number: Int!, $first: Int!, $after: String) { repository(owner: $owner, name: $repository) { pullRequest(number: $number) { reviewThreads(first: $first, after: $after) { totalCount pageInfo { endCursor hasNextPage } nodes { id path line originalLine diffSide isResolved isOutdated comments(first: 100) { totalCount pageInfo { endCursor hasNextPage } nodes { id databaseId body path line originalLine author { login avatarUrl url } commit { oid } url createdAt updatedAt pullRequestReview { databaseId } } } } } } } }`,
           variables: {
             owner: input.owner,
             repository: input.repository,
@@ -1856,7 +1864,7 @@ export const make = Effect.gen(function* () {
         method: "POST",
         headers: { Accept: DEFAULT_ACCEPT },
         body: {
-          query: `query T3ReviewThreadComments($id: ID!, $first: Int!, $after: String) { node(id: $id) { ... on PullRequestReviewThread { comments(first: $first, after: $after) { totalCount pageInfo { endCursor hasNextPage } nodes { id databaseId body path line originalLine diffSide author { login avatarUrl url } commit { oid } url createdAt updatedAt pullRequestReview { databaseId } } } } } }`,
+          query: `query T3ReviewThreadComments($id: ID!, $first: Int!, $after: String) { node(id: $id) { ... on PullRequestReviewThread { comments(first: $first, after: $after) { totalCount pageInfo { endCursor hasNextPage } nodes { id databaseId body path line originalLine author { login avatarUrl url } commit { oid } url createdAt updatedAt pullRequestReview { databaseId } } } } } }`,
           variables: {
             id: input.threadNodeId,
             first: normalizePageSize(input.pageSize),

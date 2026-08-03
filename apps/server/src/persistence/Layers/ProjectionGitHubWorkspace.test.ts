@@ -469,6 +469,33 @@ layer("GitHub workspace persistence", (it) => {
         assert.strictEqual(detail.value.commits[0]?.sha, pullRequest.headSha);
         assert.strictEqual(detail.value.changedFiles[0]?.path, "src/github.ts");
 
+        yield* repository.savePullRequestPage({
+          repositoryConnectionId: connectionId,
+          records: [
+            {
+              ...pullRequest,
+              reviewDecision: "none",
+              requiredCheckNames: [],
+              syncedAt: later,
+            },
+          ],
+          cursor: {
+            ...issueCursor,
+            id: SyncCursorId.make("github-pr-list-cursor"),
+            resourceType: "pull_requests",
+            cursor: null,
+            lastSuccessfulSyncAt: later,
+            lastAttemptAt: later,
+          },
+          pageInfo: { endCursor: null, hasNextPage: false, totalCount: 1 },
+        });
+        const afterSummaryRefresh = yield* repository.getPullRequestById({
+          pullRequestRecordId: pullRequestId,
+        });
+        assert.ok(Option.isSome(afterSummaryRefresh));
+        assert.strictEqual(afterSummaryRefresh.value.reviewDecision, "review_required");
+        assert.deepStrictEqual(afterSummaryRefresh.value.requiredCheckNames, ["test"]);
+
         yield* repository.savePullRequestDetail({
           pullRequest: {
             ...pullRequest,

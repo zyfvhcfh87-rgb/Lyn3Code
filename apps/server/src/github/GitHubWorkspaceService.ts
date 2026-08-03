@@ -363,6 +363,14 @@ export const make = Effect.gen(function* () {
     effect: Effect.Effect<A, ProjectionRepositoryError>,
   ): QueryEffect<A> =>
     effect.pipe(
+      Effect.tapError((error) =>
+        Effect.logError("GitHub cache query failed", {
+          operation,
+          errorTag: error._tag,
+          causeType:
+            "cause" in error && error.cause instanceof Error ? error.cause.name : "unavailable",
+        }),
+      ),
       Effect.mapError(() =>
         queryError(operation, "remote_error", "The local GitHub cache could not be read."),
       ),
@@ -372,6 +380,14 @@ export const make = Effect.gen(function* () {
     effect: Effect.Effect<A, ProjectionRepositoryError>,
   ): MutationEffect<A> =>
     effect.pipe(
+      Effect.tapError((error) =>
+        Effect.logError("GitHub cache mutation failed", {
+          operation,
+          errorTag: error._tag,
+          causeType:
+            "cause" in error && error.cause instanceof Error ? error.cause.name : "unavailable",
+        }),
+      ),
       Effect.mapError(() =>
         mutationError(operation, "remote_error", "The local GitHub cache could not be updated."),
       ),
@@ -1139,34 +1155,61 @@ export const make = Effect.gen(function* () {
         );
       }
       const now = yield* nowIso;
+      const pullRequestId = toPullRequestRecord({
+        connectionId: connection.id,
+        pullRequest: pullRequestResult.data,
+        syncedAt: now,
+      }).id;
+      const previousDetail = yield* repository
+        .getPullRequestDetail({ pullRequestRecordId: pullRequestId })
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Ignoring unreadable cached pull request detail during refresh", {
+              repositoryConnectionId: connection.id,
+              pullRequestNumber: number,
+              errorTag: error._tag,
+            }).pipe(Effect.as(Option.none())),
+          ),
+        );
       const requiredResult = yield* api
         .getRequiredChecks({
           ...base,
           branch: pullRequestResult.data.baseRef,
           retry: { maxRetries: 0 },
         })
-        .pipe(Effect.orElseSucceed(() => null));
+        .pipe(
+          Effect.catch((error) =>
+            error._tag === "GitHubApiResponseError" && error.kind === "not_found"
+              ? Effect.succeed(null)
+              : Effect.fail(toQueryApiError("sync_pull_request_detail")(error)),
+          ),
+        );
       const reviewDecisionResult = yield* api
         .getPullRequestReviewDecision({ ...base, number, retry: { maxRetries: 0 } })
-        .pipe(Effect.orElseSucceed(() => null));
+        .pipe(Effect.mapError(toQueryApiError("sync_pull_request_detail")));
       const requiredCheckNames =
-        requiredResult === null || requiredResult.notModified ? [] : requiredResult.data;
+        requiredResult === null
+          ? []
+          : requiredResult.notModified
+            ? Option.match(previousDetail, {
+                onNone: () => [],
+                onSome: (detail) => detail.pullRequest.requiredCheckNames,
+              })
+            : requiredResult.data;
       const pullRequest = toPullRequestRecord({
         connectionId: connection.id,
         pullRequest: {
           ...pullRequestResult.data,
-          reviewDecision:
-            reviewDecisionResult === null || reviewDecisionResult.notModified
-              ? pullRequestResult.data.reviewDecision
-              : reviewDecisionResult.data,
+          reviewDecision: reviewDecisionResult.notModified
+            ? Option.match(previousDetail, {
+                onNone: () => pullRequestResult.data.reviewDecision,
+                onSome: (detail) => detail.pullRequest.reviewDecision,
+              })
+            : reviewDecisionResult.data,
         },
         requiredCheckNames,
         syncedAt: now,
       });
-      const previousDetail = yield* persistenceQuery(
-        "sync_pull_request_detail",
-        repository.getPullRequestDetail({ pullRequestRecordId: pullRequest.id }),
-      );
       const { files, commits, reviews, threads, checks, statuses } = yield* Effect.all(
         {
           files: collectPages((cursor) =>

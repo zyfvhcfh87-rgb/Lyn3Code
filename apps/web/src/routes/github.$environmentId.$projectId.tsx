@@ -17,7 +17,7 @@ import {
   type ReviewThreadRecord,
 } from "@t3tools/contracts";
 import { CircleAlertIcon, GithubIcon } from "lucide-react";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import * as Cause from "effect/Cause";
 
 import {
@@ -109,6 +109,20 @@ function GitHubProjectWorkspaceRoute() {
     null,
   );
   const [selectedPullRequest, setSelectedPullRequest] = useState<PullRequestRecord | null>(null);
+  const lastSelectedPullRequestDetail = useRef<{
+    readonly number: number;
+    readonly remoteVersion: string;
+  } | null>(null);
+  const workspaceConnectionId = workspace?.connection.id ?? null;
+
+  useEffect(() => {
+    setIssuesCursor(null);
+    setPullRequestsCursor(null);
+    setIssuesPage(null);
+    setPullRequestsPage(null);
+    setSelectedPullRequest(null);
+    lastSelectedPullRequestDetail.current = null;
+  }, [workspaceConnectionId]);
 
   useEffect(() => {
     if (!workspaceQuery.data || !workspaceOverride) return;
@@ -148,7 +162,7 @@ function GitHubProjectWorkspaceRoute() {
         })
       : null,
   );
-  const pullRequestDetailQuery = useEnvironmentQuery(
+  const cachedPullRequestDetailQuery = useEnvironmentQuery(
     workspace && selectedPullRequest && (activeTab === "pull-requests" || activeTab === "checks")
       ? githubEnvironment.pullRequestDetailAtom({
           environmentId,
@@ -156,6 +170,18 @@ function GitHubProjectWorkspaceRoute() {
             repositoryConnectionId: workspace.connection.id,
             number: selectedPullRequest.number,
             refresh: false,
+          },
+        })
+      : null,
+  );
+  const refreshedPullRequestDetailQuery = useEnvironmentQuery(
+    workspace && selectedPullRequest && (activeTab === "pull-requests" || activeTab === "checks")
+      ? githubEnvironment.pullRequestDetailAtom({
+          environmentId,
+          input: {
+            repositoryConnectionId: workspace.connection.id,
+            number: selectedPullRequest.number,
+            refresh: true,
           },
         })
       : null,
@@ -206,10 +232,36 @@ function GitHubProjectWorkspaceRoute() {
   }, [pullRequestsCursor, pullRequestsQuery.data]);
 
   useEffect(() => {
-    if ((activeTab !== "checks" && activeTab !== "pull-requests") || selectedPullRequest) return;
-    const first = pullRequestsPage?.records[0];
-    if (first) setSelectedPullRequest(first);
+    if (activeTab !== "checks" && activeTab !== "pull-requests") return;
+    const next = selectedPullRequest
+      ? pullRequestsPage?.records.find(
+          (pullRequest) => pullRequest.number === selectedPullRequest.number,
+        )
+      : pullRequestsPage?.records[0];
+    if (!next) return;
+    const refreshTarget = `${next.id}:${next.headSha}:${next.updatedAtRemote}`;
+    const selectedTarget = selectedPullRequest
+      ? `${selectedPullRequest.id}:${selectedPullRequest.headSha}:${selectedPullRequest.updatedAtRemote}`
+      : null;
+    if (refreshTarget === selectedTarget) return;
+    setSelectedPullRequest(next);
   }, [activeTab, pullRequestsPage, selectedPullRequest]);
+
+  useEffect(() => {
+    if (!selectedPullRequest) {
+      lastSelectedPullRequestDetail.current = null;
+      return;
+    }
+    const current = {
+      number: selectedPullRequest.number,
+      remoteVersion: `${selectedPullRequest.headSha}:${selectedPullRequest.updatedAtRemote}`,
+    };
+    const previous = lastSelectedPullRequestDetail.current;
+    lastSelectedPullRequestDetail.current = current;
+    if (previous?.number === current.number && previous.remoteVersion !== current.remoteVersion) {
+      refreshedPullRequestDetailQuery.refresh();
+    }
+  }, [selectedPullRequest, refreshedPullRequestDetailQuery.refresh]);
 
   const connectAccount = useWebAtomCommand(githubEnvironment.connectAccount, {
     reportFailure: false,
@@ -428,7 +480,7 @@ function GitHubProjectWorkspaceRoute() {
     }
   };
 
-  const detail = pullRequestDetailQuery.data;
+  const detail = refreshedPullRequestDetailQuery.data ?? cachedPullRequestDetailQuery.data;
   const handleCreateReviewTask = async (comment: ReviewCommentRecord, missionId: MissionId) => {
     const result = await run(
       "review-task",
@@ -445,7 +497,7 @@ function GitHubProjectWorkspaceRoute() {
         }),
       "Review fix task created",
     );
-    if (result) pullRequestDetailQuery.refresh();
+    if (result) refreshedPullRequestDetailQuery.refresh();
   };
   const handleResolveThread = async (thread: ReviewThreadRecord) => {
     const result = await run(
@@ -458,7 +510,7 @@ function GitHubProjectWorkspaceRoute() {
         }),
       "Review thread resolved",
     );
-    if (result) pullRequestDetailQuery.refresh();
+    if (result) refreshedPullRequestDetailQuery.refresh();
   };
 
   if (!project) {
@@ -512,62 +564,78 @@ function GitHubProjectWorkspaceRoute() {
     environment?.connection.phase === "connected" &&
     missionState.status === "live" &&
     workspace.connection.permissions.canRead;
-  const renderDetail = (focus: "all" | "checks") =>
-    detail ? (
-      <Suspense
-        fallback={<p className="text-sm text-muted-foreground">Loading pull request workspace…</p>}
-      >
-        <GitHubPullRequestDetail
-          detail={detail}
-          localVerificationRuns={verificationQuery.data?.runs ?? []}
-          canWrite={canWrite}
-          loading={pullRequestDetailQuery.isPending}
-          focus={focus}
-          onRefresh={pullRequestDetailQuery.refresh}
-          onUpdate={async (title, body) => {
-            const result = await run(
-              "update-pr",
-              "Could not update pull request",
-              () =>
-                updatePullRequest({
-                  environmentId,
-                  input: {
-                    repositoryConnectionId: workspace.connection.id,
-                    number: detail.pullRequest.number,
-                    title,
-                    ...(body === undefined ? {} : { body }),
-                  },
-                }),
-              "Pull request updated",
-            );
-            if (result) pullRequestDetailQuery.refresh();
-          }}
-          onMarkReady={async () => {
-            const result = await run(
-              "ready",
-              "Could not mark pull request ready",
-              () =>
-                markReady({
-                  environmentId,
-                  input: {
-                    repositoryConnectionId: workspace.connection.id,
-                    number: detail.pullRequest.number,
-                    confirmation: true,
-                  },
-                }),
-              "Pull request marked ready for review",
-            );
-            if (result) pullRequestDetailQuery.refresh();
-          }}
-          onCreateReviewTask={handleCreateReviewTask}
-          onResolveThread={handleResolveThread}
-        />
-      </Suspense>
-    ) : (
-      <p className="text-sm text-muted-foreground">
-        Select a pull request to load commits, files, reviews, threads, and checks.
-      </p>
-    );
+  const renderDetail = (focus: "all" | "checks") => (
+    <div className="grid gap-3">
+      {refreshedPullRequestDetailQuery.error ? (
+        <Alert variant="error">
+          <CircleAlertIcon />
+          <AlertTitle>Couldn’t refresh pull request detail</AlertTitle>
+          <AlertDescription>
+            {refreshedPullRequestDetailQuery.error} Cached detail remains available when present.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {detail ? (
+        <Suspense
+          fallback={
+            <p className="text-sm text-muted-foreground">Loading pull request workspace…</p>
+          }
+        >
+          <GitHubPullRequestDetail
+            detail={detail}
+            localVerificationRuns={verificationQuery.data?.runs ?? []}
+            canWrite={canWrite}
+            loading={
+              cachedPullRequestDetailQuery.isPending || refreshedPullRequestDetailQuery.isPending
+            }
+            focus={focus}
+            onRefresh={refreshedPullRequestDetailQuery.refresh}
+            onUpdate={async (title, body) => {
+              const result = await run(
+                "update-pr",
+                "Could not update pull request",
+                () =>
+                  updatePullRequest({
+                    environmentId,
+                    input: {
+                      repositoryConnectionId: workspace.connection.id,
+                      number: detail.pullRequest.number,
+                      title,
+                      ...(body === undefined ? {} : { body }),
+                    },
+                  }),
+                "Pull request updated",
+              );
+              if (result) refreshedPullRequestDetailQuery.refresh();
+            }}
+            onMarkReady={async () => {
+              const result = await run(
+                "ready",
+                "Could not mark pull request ready",
+                () =>
+                  markReady({
+                    environmentId,
+                    input: {
+                      repositoryConnectionId: workspace.connection.id,
+                      number: detail.pullRequest.number,
+                      confirmation: true,
+                    },
+                  }),
+                "Pull request marked ready for review",
+              );
+              if (result) refreshedPullRequestDetailQuery.refresh();
+            }}
+            onCreateReviewTask={handleCreateReviewTask}
+            onResolveThread={handleResolveThread}
+          />
+        </Suspense>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Select a pull request to load commits, files, reviews, threads, and checks.
+        </p>
+      )}
+    </div>
+  );
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden bg-background text-foreground">

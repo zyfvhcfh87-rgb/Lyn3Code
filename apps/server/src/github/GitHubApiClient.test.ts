@@ -290,6 +290,99 @@ describe("GitHubApiClient", () => {
         totalCount: 101,
       });
       assert.strictEqual(thread?.comments[0]?.reviewId, "9");
+      expect(executeApi).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.objectContaining({
+            query: expect.not.stringContaining("databaseId body path line originalLine diffSide"),
+          }),
+        }),
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("omits oversized pull request patches instead of presenting truncated evidence", () => {
+    executeApi.mockReturnValueOnce(
+      Effect.succeed(
+        output(
+          [
+            "HTTP/2.0 200 OK",
+            "",
+            JSON.stringify([
+              {
+                filename: "src/large.ts",
+                status: "added",
+                additions: 1,
+                deletions: 0,
+                changes: 1,
+                patch: "x".repeat(65_537),
+              },
+            ]),
+          ].join("\n"),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const github = yield* GitHubApi.GitHubApiClient;
+      const result = yield* github.listPullRequestFiles({
+        cwd: "/repo",
+        hostname: "github.com",
+        owner: "acme",
+        repository: "widgets",
+        number: 3,
+      });
+
+      assert.isFalse(result.notModified);
+      if (result.notModified) return;
+      assert.isNull(result.data.records[0]?.patch ?? null);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("follows GitHub numeric repository pagination cursors", () => {
+    executeApi
+      .mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            [
+              "HTTP/2.0 200 OK",
+              'link: <https://api.github.com/repositories/123/pulls/3/files?per_page=100&page=2>; rel="next"',
+              "",
+              "[]",
+            ].join("\n"),
+          ),
+        ),
+      )
+      .mockReturnValueOnce(Effect.succeed(output(["HTTP/2.0 200 OK", "", "[]"].join("\n"))));
+
+    return Effect.gen(function* () {
+      const github = yield* GitHubApi.GitHubApiClient;
+      const first = yield* github.listPullRequestFiles({
+        cwd: "/repo",
+        hostname: "github.com",
+        owner: "acme",
+        repository: "widgets",
+        number: 3,
+      });
+
+      assert.isFalse(first.notModified);
+      if (first.notModified) return;
+      const cursor = first.data.pageInfo.endCursor;
+      assert.strictEqual(cursor, "repositories/123/pulls/3/files?per_page=100&page=2");
+
+      yield* github.listPullRequestFiles({
+        cwd: "/repo",
+        hostname: "github.com",
+        owner: "acme",
+        repository: "widgets",
+        number: 3,
+        cursor,
+      });
+
+      expect(executeApi).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          endpoint: "repositories/123/pulls/3/files?per_page=100&page=2",
+        }),
+      );
     }).pipe(Effect.provide(layer));
   });
 

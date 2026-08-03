@@ -574,7 +574,10 @@ const make = Effect.gen(function* () {
     WHERE excluded.synced_at >= projection_github_issues.synced_at
   `;
 
-  const upsertPullRequestRow = (row: ProjectionPullRequestRecord) => sql`
+  const upsertPullRequestRow = (
+    row: ProjectionPullRequestRecord,
+    preserveDetailEvidence = false,
+  ) => sql`
     INSERT INTO projection_github_pull_requests (
       pull_request_record_id, repository_connection_id, github_pull_request_id,
       pull_request_number, title, body_preview, state, is_draft, author_json, head_ref, head_sha,
@@ -594,10 +597,19 @@ const make = Effect.gen(function* () {
       is_draft = excluded.is_draft, author_json = excluded.author_json,
       head_ref = excluded.head_ref, head_sha = excluded.head_sha,
       base_ref = excluded.base_ref, base_sha = excluded.base_sha,
-      mergeable_state = excluded.mergeable_state, review_decision = excluded.review_decision,
+      mergeable_state = excluded.mergeable_state,
+      review_decision = ${sql.unsafe(
+        preserveDetailEvidence
+          ? "projection_github_pull_requests.review_decision"
+          : "excluded.review_decision",
+      )},
       changed_file_count = excluded.changed_file_count, commit_count = excluded.commit_count,
       comment_count = excluded.comment_count,
-      required_check_names_json = excluded.required_check_names_json,
+      required_check_names_json = ${sql.unsafe(
+        preserveDetailEvidence
+          ? "projection_github_pull_requests.required_check_names_json"
+          : "excluded.required_check_names_json",
+      )},
       html_url = excluded.html_url, created_at_remote = excluded.created_at_remote,
       updated_at_remote = excluded.updated_at_remote, merged_at_remote = excluded.merged_at_remote,
       closed_at_remote = excluded.closed_at_remote, synced_at = excluded.synced_at
@@ -791,7 +803,7 @@ const make = Effect.gen(function* () {
               "page records and cursor must belong to the requested repository",
             );
           }
-          for (const record of input.records) yield* upsertPullRequestRow(record);
+          for (const record of input.records) yield* upsertPullRequestRow(record, true);
           yield* saveCursorRow(input.cursor);
         }),
       )
