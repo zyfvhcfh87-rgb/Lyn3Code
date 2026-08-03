@@ -1331,14 +1331,25 @@ const makeProjectionMemoryRepository = Effect.gen(function* () {
     }
     if (filter.query.trim().length > 0) {
       const expression = ftsExpression(filter.query);
+      const pattern = likePattern(filter.query);
+      const sourceMatch = sql`EXISTS (
+        SELECT 1 FROM projection_memory_sources AS source
+        WHERE source.memory_entry_id = entry.memory_entry_id
+          AND (source.source_identifier LIKE ${pattern} ESCAPE '\\'
+            OR source.repository_path LIKE ${pattern} ESCAPE '\\'
+            OR source.file_path LIKE ${pattern} ESCAPE '\\'
+            OR source.branch_name LIKE ${pattern} ESCAPE '\\'
+            OR source.message_reference LIKE ${pattern} ESCAPE '\\')
+      )`;
       clauses.push(
         expression === null
           ? sql`(entry.title LIKE ${likePattern(filter.query)} ESCAPE '\\'
-              OR entry.content LIKE ${likePattern(filter.query)} ESCAPE '\\')`
-          : sql`entry.rowid IN (
+              OR entry.content LIKE ${likePattern(filter.query)} ESCAPE '\\'
+              OR ${sourceMatch})`
+          : sql`(entry.rowid IN (
               SELECT rowid FROM projection_memory_entries_fts
               WHERE projection_memory_entries_fts MATCH ${expression}
-            )`,
+            ) OR ${sourceMatch})`,
       );
     }
     return clauses;

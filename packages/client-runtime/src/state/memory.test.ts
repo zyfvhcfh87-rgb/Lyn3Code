@@ -40,6 +40,9 @@ describe("buildMemoryListFilter", () => {
           trust: "verified",
           sourceType: "repository_file",
           branchName: "agent/mission/task",
+          missionId: "mission-1",
+          taskId: "task-1",
+          createdAfter: "2026-08-01",
         },
       }),
     ).toMatchObject({
@@ -49,6 +52,9 @@ describe("buildMemoryListFilter", () => {
       trustLevels: ["verified"],
       sourceTypes: ["repository_file"],
       branchName: "agent/mission/task",
+      missionId: "mission-1",
+      taskId: "task-1",
+      createdAfter: "2026-08-01T00:00:00.000Z",
     });
   });
 

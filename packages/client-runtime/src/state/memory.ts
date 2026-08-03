@@ -1,4 +1,7 @@
 import {
+  IsoDateTime,
+  MissionId,
+  MissionTaskId,
   type MemoryEntryStatus,
   type MemoryEntryType,
   type MemoryListFilter,
@@ -77,6 +80,9 @@ export interface MemoryEntryFilterSelection {
   readonly trust: MemoryTrustLevel | null;
   readonly sourceType: MemorySourceType | null;
   readonly branchName: string | null;
+  readonly missionId: string | null;
+  readonly taskId: string | null;
+  readonly createdAfter: string | null;
   readonly staleOnly: boolean;
 }
 
@@ -87,6 +93,9 @@ export const EMPTY_MEMORY_FILTER_SELECTION: MemoryEntryFilterSelection = {
   trust: null,
   sourceType: null,
   branchName: null,
+  missionId: null,
+  taskId: null,
+  createdAfter: null,
   staleOnly: false,
 };
 
@@ -110,10 +119,13 @@ export function buildMemoryListFilter(input: {
     trustLevels: selection.trust === null ? [] : [selection.trust],
     sourceTypes: selection.sourceType === null ? [] : [selection.sourceType],
     branchName: selection.branchName,
-    missionId: null,
-    taskId: null,
+    missionId: selection.missionId === null ? null : MissionId.make(selection.missionId),
+    taskId: selection.taskId === null ? null : MissionTaskId.make(selection.taskId),
     query: input.query.trim(),
-    createdAfter: null,
+    createdAfter:
+      selection.createdAfter === null
+        ? null
+        : IsoDateTime.make(`${selection.createdAfter}T00:00:00.000Z`),
     staleOnly: input.section === "stale" || selection.staleOnly,
     pinnedOnly: false,
     limit: input.limit ?? 100,

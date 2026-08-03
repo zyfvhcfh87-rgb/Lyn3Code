@@ -124,6 +124,27 @@ layer("persistent project memory repository", (it) => {
         created.lifecycle.map((record) => record.action),
         ["created", "activated"],
       );
+      const sourcePathMatches = yield* repository.listEntries({
+        projectId,
+        scopeTypes: [],
+        types: [],
+        statuses: [],
+        trustLevels: [],
+        sourceTypes: [],
+        branchName: null,
+        missionId: null,
+        taskId: null,
+        query: "apps/desktop/src/preload.ts",
+        createdAfter: null,
+        staleOnly: false,
+        pinnedOnly: false,
+        limit: 10,
+        offset: 0,
+      });
+      assert.deepStrictEqual(
+        sourcePathMatches.map((entry) => entry.id),
+        [created.entry.id],
+      );
       const duplicate = yield* Effect.flip(repository.createEntry(createInput));
       assert.strictEqual(duplicate._tag, "MemoryConflictError");
 

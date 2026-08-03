@@ -240,6 +240,40 @@ export function MemoryEntryFilters({
           onChange={(sourceType) => onSelectionChange({ ...selection, sourceType })}
         />
       </div>
+      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+        <Input
+          aria-label="Branch filter"
+          placeholder="Branch"
+          value={selection.branchName ?? ""}
+          onValueChange={(branchName) =>
+            onSelectionChange({ ...selection, branchName: branchName.trim() || null })
+          }
+        />
+        <Input
+          aria-label="Mission filter"
+          placeholder="Mission ID"
+          value={selection.missionId ?? ""}
+          onValueChange={(missionId) =>
+            onSelectionChange({ ...selection, missionId: missionId.trim() || null })
+          }
+        />
+        <Input
+          aria-label="Task filter"
+          placeholder="Task ID"
+          value={selection.taskId ?? ""}
+          onValueChange={(taskId) =>
+            onSelectionChange({ ...selection, taskId: taskId.trim() || null })
+          }
+        />
+        <Input
+          aria-label="Created after filter"
+          type="date"
+          value={selection.createdAfter ?? ""}
+          onValueChange={(createdAfter) =>
+            onSelectionChange({ ...selection, createdAfter: createdAfter || null })
+          }
+        />
+      </div>
       {selection !== EMPTY_MEMORY_FILTER_SELECTION ? (
         <Button
           className="justify-self-start"
