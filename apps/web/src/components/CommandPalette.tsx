@@ -29,7 +29,6 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
   ArrowLeftIcon,
-  BrainCircuitIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
   FolderIcon,
@@ -145,10 +144,6 @@ const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 
 function renderGitHubWorkspaceIcon() {
   return <GitHubIcon className={ITEM_ICON_CLASS} />;
-}
-
-function renderMemoryWorkspaceIcon() {
-  return <BrainCircuitIcon className={ITEM_ICON_CLASS} />;
 }
 
 function getLocalFileManagerName(platform: string): string {
@@ -1007,34 +1002,6 @@ function OpenCommandPaletteDialog(props: {
     [navigate, pickerProjects],
   );
 
-  const memoryWorkspaceItems = useMemo(
-    () =>
-      enumerateCommandPaletteItems(
-        buildProjectActionItems({
-          projects: pickerProjects,
-          valuePrefix: "memory-workspace",
-          searchTerms: (project) => [
-            project.title,
-            project.workspaceRoot,
-            "memory",
-            "knowledge",
-            "repository index",
-          ],
-          icon: renderMemoryWorkspaceIcon,
-          runProject: async (project) => {
-            await navigate({
-              to: "/memory/$environmentId/$projectId",
-              params: {
-                environmentId: project.environmentId,
-                projectId: project.id,
-              },
-            });
-          },
-        }),
-      ),
-    [navigate, pickerProjects],
-  );
-
   const allThreadItems = useMemo(
     () =>
       buildThreadActionItems({
@@ -1552,24 +1519,6 @@ function OpenCommandPaletteDialog(props: {
       icon: <GitHubIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <GitHubIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "github-projects", label: "Projects", items: githubWorkspaceItems }],
-    });
-  }
-
-  if (memoryWorkspaceItems.length > 0) {
-    actionItems.push({
-      kind: "submenu",
-      value: "action:memory-workspace",
-      searchTerms: [
-        "memory",
-        "project knowledge",
-        "architecture decisions",
-        "repository index",
-        "proposals",
-      ],
-      title: "Open project memory",
-      icon: <BrainCircuitIcon className={ITEM_ICON_CLASS} />,
-      addonIcon: <BrainCircuitIcon className={ADDON_ICON_CLASS} />,
-      groups: [{ value: "memory-projects", label: "Projects", items: memoryWorkspaceItems }],
     });
   }
 

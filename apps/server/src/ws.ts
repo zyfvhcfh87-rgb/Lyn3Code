@@ -111,7 +111,6 @@ import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as VerificationQuery from "./verification/VerificationQueryService.ts";
 import * as GitHubWorkspace from "./github/GitHubWorkspaceService.ts";
 import * as GitHubWorkflow from "./github/GitHubWorkflowService.ts";
-import * as MemoryWorkspace from "./memory/MemoryWorkspaceService.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -365,7 +364,6 @@ const makeWsRpcLayer = (
       const verificationQuery = yield* VerificationQuery.VerificationQueryService;
       const githubWorkspace = yield* GitHubWorkspace.GitHubWorkspaceService;
       const githubWorkflow = yield* GitHubWorkflow.GitHubWorkflowService;
-      const memoryWorkspace = yield* MemoryWorkspace.MemoryWorkspaceService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
@@ -2087,106 +2085,6 @@ const makeWsRpcLayer = (
               ),
             ),
             { "rpc.aggregate": "github" },
-          ),
-        [WS_METHODS.memoryGetWorkspace]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.memoryGetWorkspace,
-            memoryWorkspace.getWorkspace(input.projectId),
-            { "rpc.aggregate": "memory" },
-          ),
-        [WS_METHODS.memoryListEntries]: (input) =>
-          observeRpcEffect(WS_METHODS.memoryListEntries, memoryWorkspace.listEntries(input), {
-            "rpc.aggregate": "memory",
-          }),
-        [WS_METHODS.memoryGetEntry]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.memoryGetEntry,
-            memoryWorkspace.getEntry(input.memoryEntryId),
-            { "rpc.aggregate": "memory" },
-          ),
-        [WS_METHODS.memoryCreateEntry]: (input) =>
-          observeRpcEffect(WS_METHODS.memoryCreateEntry, memoryWorkspace.createEntry(input), {
-            "rpc.aggregate": "memory",
-          }),
-        [WS_METHODS.memoryUpdateEntry]: (input) =>
-          observeRpcEffect(WS_METHODS.memoryUpdateEntry, memoryWorkspace.updateEntry(input), {
-            "rpc.aggregate": "memory",
-          }),
-        [WS_METHODS.memoryActionEntry]: (input) =>
-          observeRpcEffect(WS_METHODS.memoryActionEntry, memoryWorkspace.actionEntry(input), {
-            "rpc.aggregate": "memory",
-          }),
-        [WS_METHODS.memorySupersedeEntry]: (input) =>
-          observeRpcEffect(WS_METHODS.memorySupersedeEntry, memoryWorkspace.supersedeEntry(input), {
-            "rpc.aggregate": "memory",
-          }),
-        [WS_METHODS.memoryAddSource]: (input) =>
-          observeRpcEffect(WS_METHODS.memoryAddSource, memoryWorkspace.addSource(input), {
-            "rpc.aggregate": "memory",
-          }),
-        [WS_METHODS.memoryCreateRelation]: (input) =>
-          observeRpcEffect(WS_METHODS.memoryCreateRelation, memoryWorkspace.createRelation(input), {
-            "rpc.aggregate": "memory",
-          }),
-        [WS_METHODS.memoryListProposals]: (input) =>
-          observeRpcEffect(WS_METHODS.memoryListProposals, memoryWorkspace.listProposals(input), {
-            "rpc.aggregate": "memory",
-          }),
-        [WS_METHODS.memoryCreateProposal]: (input) =>
-          observeRpcEffect(WS_METHODS.memoryCreateProposal, memoryWorkspace.createProposal(input), {
-            "rpc.aggregate": "memory",
-          }),
-        [WS_METHODS.memoryReviewProposal]: (input) =>
-          observeRpcEffect(WS_METHODS.memoryReviewProposal, memoryWorkspace.reviewProposal(input), {
-            "rpc.aggregate": "memory",
-          }),
-        [WS_METHODS.memoryListIndexedSources]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.memoryListIndexedSources,
-            memoryWorkspace.listIndexedSources(input),
-            { "rpc.aggregate": "memory" },
-          ),
-        [WS_METHODS.memoryRequestIndex]: (input) =>
-          observeRpcEffect(WS_METHODS.memoryRequestIndex, memoryWorkspace.requestIndex(input), {
-            "rpc.aggregate": "memory",
-          }),
-        [WS_METHODS.memorySearch]: (input) =>
-          observeRpcEffect(WS_METHODS.memorySearch, memoryWorkspace.search(input), {
-            "rpc.aggregate": "memory",
-          }),
-        [WS_METHODS.memoryListRetrievals]: (input) =>
-          observeRpcEffect(WS_METHODS.memoryListRetrievals, memoryWorkspace.listRetrievals(input), {
-            "rpc.aggregate": "memory",
-          }),
-        [WS_METHODS.memoryGetRetrieval]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.memoryGetRetrieval,
-            memoryWorkspace.getRetrieval(input.retrievalRecordId),
-            { "rpc.aggregate": "memory" },
-          ),
-        [WS_METHODS.memoryUpdateSettings]: (input) =>
-          observeRpcEffect(WS_METHODS.memoryUpdateSettings, memoryWorkspace.updateSettings(input), {
-            "rpc.aggregate": "memory",
-          }),
-        [WS_METHODS.memoryExport]: (input) =>
-          observeRpcEffect(WS_METHODS.memoryExport, memoryWorkspace.exportMemory(input.projectId), {
-            "rpc.aggregate": "memory",
-          }),
-        [WS_METHODS.memoryImport]: (input) =>
-          observeRpcEffect(WS_METHODS.memoryImport, memoryWorkspace.importMemory(input), {
-            "rpc.aggregate": "memory",
-          }),
-        [WS_METHODS.memorySubscribeWorkspace]: (input) =>
-          observeRpcStream(
-            WS_METHODS.memorySubscribeWorkspace,
-            Stream.concat(
-              Stream.fromEffect(memoryWorkspace.getWorkspace(input.projectId)),
-              memoryWorkspace.changes.pipe(
-                Stream.filter((change) => change.projectId === input.projectId),
-                Stream.mapEffect(() => memoryWorkspace.getWorkspace(input.projectId)),
-              ),
-            ),
-            { "rpc.aggregate": "memory" },
           ),
         [WS_METHODS.subscribeVcsStatus]: (input) =>
           observeRpcStream(

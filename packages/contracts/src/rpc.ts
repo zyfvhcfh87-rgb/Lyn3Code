@@ -186,45 +186,6 @@ import {
   ReviewThreadRecordId,
 } from "./github.ts";
 import {
-  AddMemorySourceInput,
-  CreateMemoryEntryInput,
-  CreateMemoryProposalInput,
-  CreateMemoryRelationInput,
-  IndexedSourceListInput,
-  IndexedSourcePage,
-  MemoryConflictError,
-  MemoryEntry,
-  MemoryEntryActionInput,
-  MemoryEntryDetail,
-  MemoryEntryId,
-  MemoryEntryPage,
-  MemoryExportBundle,
-  MemoryImportInput,
-  MemoryImportResult,
-  MemoryIndexOperation,
-  MemoryIndexRequest,
-  MemoryListFilter,
-  MemoryNotFoundError,
-  MemoryProposal,
-  MemoryProposalListFilter,
-  MemoryProposalPage,
-  MemoryRelation,
-  MemoryRetrievalListInput,
-  MemoryRetrievalRecord,
-  MemoryRetrievalRecordId,
-  MemoryRetrievalRecordPage,
-  MemorySearchInput,
-  MemorySearchResult,
-  MemorySource,
-  MemoryUnavailableError,
-  MemoryValidationError,
-  MemoryWorkspaceSnapshot,
-  ReviewMemoryProposalInput,
-  SupersedeMemoryEntryInput,
-  UpdateMemoryEntryInput,
-  UpdateMemorySettingsInput,
-} from "./memory.ts";
-import {
   VerificationLogPage,
   VerificationArtifactAccessError,
   VerificationArtifactAccessUrl,
@@ -293,29 +254,6 @@ export const WS_METHODS = {
   githubMarkReadyForReview: "github.markReadyForReview",
   githubResolveReviewThread: "github.resolveReviewThread",
   githubSubscribeWorkspace: "github.subscribeWorkspace",
-
-  // Persistent project memory
-  memoryGetWorkspace: "memory.getWorkspace",
-  memoryListEntries: "memory.listEntries",
-  memoryGetEntry: "memory.getEntry",
-  memoryCreateEntry: "memory.createEntry",
-  memoryUpdateEntry: "memory.updateEntry",
-  memoryActionEntry: "memory.actionEntry",
-  memorySupersedeEntry: "memory.supersedeEntry",
-  memoryAddSource: "memory.addSource",
-  memoryCreateRelation: "memory.createRelation",
-  memoryListProposals: "memory.listProposals",
-  memoryCreateProposal: "memory.createProposal",
-  memoryReviewProposal: "memory.reviewProposal",
-  memoryListIndexedSources: "memory.listIndexedSources",
-  memoryRequestIndex: "memory.requestIndex",
-  memorySearch: "memory.search",
-  memoryListRetrievals: "memory.listRetrievals",
-  memoryGetRetrieval: "memory.getRetrieval",
-  memoryUpdateSettings: "memory.updateSettings",
-  memoryExport: "memory.export",
-  memoryImport: "memory.import",
-  memorySubscribeWorkspace: "memory.subscribeWorkspace",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -947,144 +885,6 @@ export const WsGitHubSubscribeWorkspaceRpc = Rpc.make(WS_METHODS.githubSubscribe
   stream: true,
 });
 
-const MemoryRpcError = Schema.Union([
-  MemoryValidationError,
-  MemoryNotFoundError,
-  MemoryConflictError,
-  MemoryUnavailableError,
-  EnvironmentAuthorizationError,
-]);
-
-export const WsMemoryGetWorkspaceRpc = Rpc.make(WS_METHODS.memoryGetWorkspace, {
-  payload: Schema.Struct({ projectId: ProjectId }),
-  success: MemoryWorkspaceSnapshot,
-  error: MemoryRpcError,
-});
-
-export const WsMemoryListEntriesRpc = Rpc.make(WS_METHODS.memoryListEntries, {
-  payload: MemoryListFilter,
-  success: MemoryEntryPage,
-  error: MemoryRpcError,
-});
-
-export const WsMemoryGetEntryRpc = Rpc.make(WS_METHODS.memoryGetEntry, {
-  payload: Schema.Struct({ memoryEntryId: MemoryEntryId }),
-  success: MemoryEntryDetail,
-  error: MemoryRpcError,
-});
-
-export const WsMemoryCreateEntryRpc = Rpc.make(WS_METHODS.memoryCreateEntry, {
-  payload: CreateMemoryEntryInput,
-  success: MemoryEntryDetail,
-  error: MemoryRpcError,
-});
-
-export const WsMemoryUpdateEntryRpc = Rpc.make(WS_METHODS.memoryUpdateEntry, {
-  payload: UpdateMemoryEntryInput,
-  success: MemoryEntryDetail,
-  error: MemoryRpcError,
-});
-
-export const WsMemoryActionEntryRpc = Rpc.make(WS_METHODS.memoryActionEntry, {
-  payload: MemoryEntryActionInput,
-  success: MemoryEntryDetail,
-  error: MemoryRpcError,
-});
-
-export const WsMemorySupersedeEntryRpc = Rpc.make(WS_METHODS.memorySupersedeEntry, {
-  payload: SupersedeMemoryEntryInput,
-  success: Schema.Struct({ superseded: MemoryEntry, replacement: MemoryEntry }),
-  error: MemoryRpcError,
-});
-
-export const WsMemoryAddSourceRpc = Rpc.make(WS_METHODS.memoryAddSource, {
-  payload: AddMemorySourceInput,
-  success: MemorySource,
-  error: MemoryRpcError,
-});
-
-export const WsMemoryCreateRelationRpc = Rpc.make(WS_METHODS.memoryCreateRelation, {
-  payload: CreateMemoryRelationInput,
-  success: MemoryRelation,
-  error: MemoryRpcError,
-});
-
-export const WsMemoryListProposalsRpc = Rpc.make(WS_METHODS.memoryListProposals, {
-  payload: MemoryProposalListFilter,
-  success: MemoryProposalPage,
-  error: MemoryRpcError,
-});
-
-export const WsMemoryCreateProposalRpc = Rpc.make(WS_METHODS.memoryCreateProposal, {
-  payload: CreateMemoryProposalInput,
-  success: MemoryProposal,
-  error: MemoryRpcError,
-});
-
-export const WsMemoryReviewProposalRpc = Rpc.make(WS_METHODS.memoryReviewProposal, {
-  payload: ReviewMemoryProposalInput,
-  success: Schema.Struct({
-    proposal: MemoryProposal,
-    memory: Schema.NullOr(MemoryEntryDetail),
-  }),
-  error: MemoryRpcError,
-});
-
-export const WsMemoryListIndexedSourcesRpc = Rpc.make(WS_METHODS.memoryListIndexedSources, {
-  payload: IndexedSourceListInput,
-  success: IndexedSourcePage,
-  error: MemoryRpcError,
-});
-
-export const WsMemoryRequestIndexRpc = Rpc.make(WS_METHODS.memoryRequestIndex, {
-  payload: MemoryIndexRequest,
-  success: MemoryIndexOperation,
-  error: MemoryRpcError,
-});
-
-export const WsMemorySearchRpc = Rpc.make(WS_METHODS.memorySearch, {
-  payload: MemorySearchInput,
-  success: MemorySearchResult,
-  error: MemoryRpcError,
-});
-
-export const WsMemoryListRetrievalsRpc = Rpc.make(WS_METHODS.memoryListRetrievals, {
-  payload: MemoryRetrievalListInput,
-  success: MemoryRetrievalRecordPage,
-  error: MemoryRpcError,
-});
-
-export const WsMemoryGetRetrievalRpc = Rpc.make(WS_METHODS.memoryGetRetrieval, {
-  payload: Schema.Struct({ retrievalRecordId: MemoryRetrievalRecordId }),
-  success: MemoryRetrievalRecord,
-  error: MemoryRpcError,
-});
-
-export const WsMemoryUpdateSettingsRpc = Rpc.make(WS_METHODS.memoryUpdateSettings, {
-  payload: UpdateMemorySettingsInput,
-  success: MemoryWorkspaceSnapshot,
-  error: MemoryRpcError,
-});
-
-export const WsMemoryExportRpc = Rpc.make(WS_METHODS.memoryExport, {
-  payload: Schema.Struct({ projectId: Schema.NullOr(ProjectId) }),
-  success: MemoryExportBundle,
-  error: MemoryRpcError,
-});
-
-export const WsMemoryImportRpc = Rpc.make(WS_METHODS.memoryImport, {
-  payload: MemoryImportInput,
-  success: MemoryImportResult,
-  error: MemoryRpcError,
-});
-
-export const WsMemorySubscribeWorkspaceRpc = Rpc.make(WS_METHODS.memorySubscribeWorkspace, {
-  payload: Schema.Struct({ projectId: ProjectId }),
-  success: MemoryWorkspaceSnapshot,
-  error: MemoryRpcError,
-  stream: true,
-});
-
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusInput,
   success: VcsStatusStreamEvent,
@@ -1466,27 +1266,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitHubMarkReadyForReviewRpc,
   WsGitHubResolveReviewThreadRpc,
   WsGitHubSubscribeWorkspaceRpc,
-  WsMemoryGetWorkspaceRpc,
-  WsMemoryListEntriesRpc,
-  WsMemoryGetEntryRpc,
-  WsMemoryCreateEntryRpc,
-  WsMemoryUpdateEntryRpc,
-  WsMemoryActionEntryRpc,
-  WsMemorySupersedeEntryRpc,
-  WsMemoryAddSourceRpc,
-  WsMemoryCreateRelationRpc,
-  WsMemoryListProposalsRpc,
-  WsMemoryCreateProposalRpc,
-  WsMemoryReviewProposalRpc,
-  WsMemoryListIndexedSourcesRpc,
-  WsMemoryRequestIndexRpc,
-  WsMemorySearchRpc,
-  WsMemoryListRetrievalsRpc,
-  WsMemoryGetRetrievalRpc,
-  WsMemoryUpdateSettingsRpc,
-  WsMemoryExportRpc,
-  WsMemoryImportRpc,
-  WsMemorySubscribeWorkspaceRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,

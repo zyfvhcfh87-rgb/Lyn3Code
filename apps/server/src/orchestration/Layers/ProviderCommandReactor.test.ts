@@ -61,10 +61,6 @@ import * as Clock from "effect/Clock";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
-import {
-  MemoryContextAssembler,
-  type MemoryContextAssemblerShape,
-} from "../../memory/MemoryContextAssembler.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
@@ -155,7 +151,6 @@ describe("ProviderCommandReactor", () => {
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
-    readonly memoryContextAssembler?: MemoryContextAssemblerShape;
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -391,20 +386,6 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
-      Layer.provideMerge(
-        Layer.succeed(
-          MemoryContextAssembler,
-          input?.memoryContextAssembler ?? {
-            assemble: (assemblyInput) =>
-              Effect.succeed({
-                providerInput: assemblyInput.userMessage,
-                attached: false,
-                auditRecordId: null,
-                fallbackReason: "Disabled in provider reactor test harness",
-              }),
-          },
-        ),
-      ),
       Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
       Layer.provideMerge(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
@@ -566,55 +547,6 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.providerSessionId).toBe("provider-session-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
-
-  effectIt.effect(
-    "assembles memory at the provider boundary without rewriting the stored user message",
-    () =>
-      Effect.gen(function* () {
-        const assemble = vi.fn<MemoryContextAssemblerShape["assemble"]>((input) =>
-          Effect.succeed({
-            providerInput: `[memory evidence]\n${input.userMessage}`,
-            attached: true,
-            auditRecordId: null,
-            fallbackReason: null,
-          }),
-        );
-        const harness = yield* Effect.promise(() =>
-          createHarness({ memoryContextAssembler: { assemble } }),
-        );
-        const messageId = asMessageId("user-message-memory-context");
-
-        yield* harness.engine.dispatch({
-          type: "thread.turn.start",
-          commandId: CommandId.make("cmd-turn-start-memory-context"),
-          threadId: ThreadId.make("thread-1"),
-          message: {
-            messageId,
-            role: "user",
-            text: "fix the preload bridge",
-            attachments: [],
-          },
-          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-          runtimeMode: "approval-required",
-          createdAt: "2026-01-01T00:00:00.000Z",
-        });
-
-        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
-        expect(assemble).toHaveBeenCalledWith({
-          threadId: ThreadId.make("thread-1"),
-          messageId,
-          userMessage: "fix the preload bridge",
-        });
-        expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
-          input: "[memory evidence]\nfix the preload bridge",
-        });
-        const readModel = yield* Effect.promise(() => harness.readModel());
-        const stored = readModel.threads
-          .find((thread) => thread.id === ThreadId.make("thread-1"))
-          ?.messages.find((message) => message.id === messageId);
-        expect(stored?.text).toBe("fix the preload bridge");
-      }),
-  );
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>
     Effect.gen(function* () {

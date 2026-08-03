@@ -61,12 +61,7 @@ import { VerificationOrchestrationReactorLive } from "./orchestration/Layers/Ver
 import { ProjectionVerificationConfigurationRepositoryLive } from "./persistence/Layers/ProjectionVerificationConfiguration.ts";
 import { ProjectionVerificationRunRepositoryLive } from "./persistence/Layers/ProjectionVerificationRuns.ts";
 import { ProjectionGitHubWorkspaceRepositoryLive } from "./persistence/Layers/ProjectionGitHubWorkspace.ts";
-import { ProjectionMemoryRepositoryLive } from "./persistence/Layers/ProjectionMemory.ts";
 import { ProjectionProjectRepositoryLive } from "./persistence/Layers/ProjectionProjects.ts";
-import { ProjectionAgentRunRepositoryLive } from "./persistence/Layers/ProjectionAgentRuns.ts";
-import { ProjectionMissionRepositoryLive } from "./persistence/Layers/ProjectionMissions.ts";
-import { ProjectionMissionTaskRepositoryLive } from "./persistence/Layers/ProjectionMissionTasks.ts";
-import { ProjectionMissionTeamRepositoryLive } from "./persistence/Layers/ProjectionMissionTeams.ts";
 import * as VerificationArtifactCollector from "./verification/VerificationArtifactCollector.ts";
 import * as VerificationConfig from "./verification/VerificationConfig.ts";
 import * as VerificationEngine from "./verification/VerificationEngine.ts";
@@ -81,25 +76,6 @@ import * as GitHubEventRecorder from "./github/GitHubEventRecorder.ts";
 import * as GitHubGitSafety from "./github/GitHubGitSafety.ts";
 import * as GitHubWorkspace from "./github/GitHubWorkspaceService.ts";
 import * as GitHubWorkflow from "./github/GitHubWorkflowService.ts";
-import { EmbeddingProviderDisabledLive } from "./memory/EmbeddingProvider.ts";
-import * as MemoryEmbeddingCoordinator from "./memory/MemoryEmbeddingCoordinator.ts";
-import {
-  MemoryContextAssemblerLive,
-  MemoryContextScopeResolverLive,
-} from "./memory/MemoryContextAssembler.ts";
-import * as MemoryEventRecorder from "./memory/MemoryEventRecorder.ts";
-import {
-  MemoryProposalExtractor,
-  MemoryProposalExtractorLive,
-} from "./memory/MemoryProposalExtractor.ts";
-import { MemoryRetrievalLive } from "./memory/MemoryRetrieval.ts";
-import { ProjectionMemoryRetrievalDataSourceLive } from "./memory/ProjectionMemoryRetrievalDataSource.ts";
-import * as RepositoryIndexer from "./memory/RepositoryIndexer.ts";
-import {
-  MemorySourceFreshnessResolverLive,
-  MemoryStalenessServiceLive,
-} from "./memory/MemoryStalenessService.ts";
-import * as MemoryWorkspace from "./memory/MemoryWorkspaceService.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
@@ -325,90 +301,6 @@ const GitHubEnvironmentRuntimeLayerLive = Layer.mergeAll(
   GitHubRuntimeLayerLive,
 ).pipe(Layer.provideMerge(RepositoryIdentityResolver.layer));
 
-const MemoryEventRecorderLayerLive = MemoryEventRecorder.layer.pipe(
-  Layer.provide(OrchestrationLayerLive),
-);
-const MemoryRetrievalDataSourceLayerLive = ProjectionMemoryRetrievalDataSourceLive.pipe(
-  Layer.provide(ProjectionMemoryRepositoryLive),
-);
-const MemoryRetrievalLayerLive = MemoryRetrievalLive.pipe(
-  Layer.provideMerge(MemoryRetrievalDataSourceLayerLive),
-  Layer.provide(EmbeddingProviderDisabledLive),
-);
-const RepositoryIndexerLayerLive = RepositoryIndexer.layer.pipe(
-  Layer.provideMerge(ProjectionMemoryRepositoryLive),
-  Layer.provideMerge(GitVcsDriver.layer),
-);
-const MemoryEmbeddingCoordinatorLayerLive = MemoryEmbeddingCoordinator.layer.pipe(
-  Layer.provideMerge(ProjectionMemoryRepositoryLive),
-  Layer.provide(EmbeddingProviderDisabledLive),
-);
-const MemoryContextScopeResolverLayerLive = MemoryContextScopeResolverLive.pipe(
-  Layer.provideMerge(OrchestrationLayerLive),
-  Layer.provideMerge(ProjectionAgentRunRepositoryLive),
-  Layer.provideMerge(ProjectionMissionRepositoryLive),
-  Layer.provideMerge(ProjectionMissionTaskRepositoryLive),
-  Layer.provideMerge(ProjectionMissionTeamRepositoryLive),
-);
-const MemoryContextAssemblerLayerLive = MemoryContextAssemblerLive.pipe(
-  Layer.provideMerge(MemoryContextScopeResolverLayerLive),
-  Layer.provideMerge(MemoryRetrievalLayerLive),
-);
-const MemoryStalenessLayerLive = MemoryStalenessServiceLive.pipe(
-  Layer.provideMerge(
-    MemorySourceFreshnessResolverLive.pipe(Layer.provide(ProjectionMemoryRepositoryLive)),
-  ),
-  Layer.provideMerge(ProjectionMemoryRepositoryLive),
-  Layer.provideMerge(MemoryEventRecorderLayerLive),
-);
-const MemoryProposalExtractorLayerLive = MemoryProposalExtractorLive.pipe(
-  Layer.provideMerge(ProjectionMemoryRepositoryLive),
-  Layer.provideMerge(ProjectionMissionRepositoryLive),
-  Layer.provideMerge(ProjectionMissionTeamRepositoryLive),
-  Layer.provideMerge(ProjectionVerificationRunRepositoryLive),
-  Layer.provideMerge(OrchestrationLayerLive),
-  Layer.provideMerge(MemoryEventRecorderLayerLive),
-);
-const MemoryWorkspaceLayerLive = MemoryWorkspace.layer.pipe(
-  Layer.provideMerge(ProjectionMemoryRepositoryLive),
-  Layer.provideMerge(ProjectionProjectRepositoryLive),
-  Layer.provideMerge(ProjectionMissionRepositoryLive),
-  Layer.provideMerge(ProjectionMissionTeamRepositoryLive),
-  Layer.provideMerge(RepositoryIndexerLayerLive),
-  Layer.provideMerge(MemoryEmbeddingCoordinatorLayerLive),
-  Layer.provideMerge(MemoryRetrievalLayerLive),
-  Layer.provideMerge(MemoryEventRecorderLayerLive),
-);
-const MemoryRecoveryLayerLive = Layer.effectDiscard(
-  MemoryWorkspace.MemoryWorkspaceService.pipe(
-    Effect.flatMap((service) => service.recoverInterruptedIndexes()),
-  ),
-).pipe(Layer.provide(MemoryWorkspaceLayerLive));
-const MemoryBackgroundIndexLayerLive = Layer.effectDiscard(
-  MemoryWorkspace.MemoryWorkspaceService.pipe(
-    Effect.flatMap((service) => service.startBackgroundRefresh()),
-  ),
-).pipe(Layer.provide(MemoryWorkspaceLayerLive));
-const MemoryProposalExtractionRuntimeLayerLive = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const service = yield* MemoryProposalExtractor;
-    yield* service.start;
-  }),
-).pipe(Layer.provide(MemoryProposalExtractorLayerLive));
-const MemoryRuntimeLayerLive = Layer.empty.pipe(
-  Layer.provideMerge(ProjectionMemoryRepositoryLive),
-  Layer.provideMerge(MemoryRetrievalLayerLive),
-  Layer.provideMerge(RepositoryIndexerLayerLive),
-  Layer.provideMerge(MemoryEmbeddingCoordinatorLayerLive),
-  Layer.provideMerge(MemoryContextAssemblerLayerLive),
-  Layer.provideMerge(MemoryStalenessLayerLive),
-  Layer.provideMerge(MemoryProposalExtractorLayerLive),
-  Layer.provideMerge(MemoryWorkspaceLayerLive),
-  Layer.provideMerge(MemoryRecoveryLayerLive),
-  Layer.provideMerge(MemoryBackgroundIndexLayerLive),
-  Layer.provideMerge(MemoryProposalExtractionRuntimeLayerLive),
-);
-
 const MissionRuntimeLayerLive = Layer.mergeAll(
   MissionRunReactorLive,
   MissionSchedulerReactorLive,
@@ -551,7 +443,6 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
-  Layer.provideMerge(MemoryRuntimeLayerLive),
   Layer.provideMerge(ServerSettingsLayerLive),
   Layer.provideMerge(CheckpointingLayerLive),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),

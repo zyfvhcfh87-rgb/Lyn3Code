@@ -8,7 +8,6 @@ import {
   type MissionAgent,
   type MissionTask,
   type OrchestrationEvent,
-  type ProjectId,
 } from "@t3tools/contracts";
 import { BotIcon, ExternalLinkIcon, OctagonXIcon } from "lucide-react";
 
@@ -32,7 +31,6 @@ function runBadgeVariant(status: AgentRun["status"]) {
 
 export function MissionAgentActivity({
   environmentId,
-  projectId,
   runs,
   agents,
   tasks,
@@ -44,7 +42,6 @@ export function MissionAgentActivity({
   onCancel,
 }: {
   readonly environmentId: string;
-  readonly projectId: ProjectId;
   readonly runs: ReadonlyArray<AgentRun>;
   readonly agents: ReadonlyArray<MissionAgent>;
   readonly tasks: ReadonlyArray<MissionTask>;
@@ -150,19 +147,6 @@ export function MissionAgentActivity({
                       }
                     >
                       Open conversation <ExternalLinkIcon />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      render={
-                        <Link
-                          to="/memory/$environmentId/$projectId"
-                          params={{ environmentId, projectId }}
-                          search={{ agentRunId: run.id }}
-                        />
-                      }
-                    >
-                      Memory audit <ExternalLinkIcon />
                     </Button>
                     {isActiveAgentRunStatus(run.status) ? (
                       <Button

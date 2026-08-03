@@ -2,7 +2,6 @@ import {
   CommandId,
   EventId,
   IsoDateTime,
-  MemoryAggregateId,
   MissionId,
   NonNegativeInt,
   OrchestrationActorKind,
@@ -37,7 +36,7 @@ const EventMetadataFromJsonString = Schema.fromJsonString(OrchestrationEventMeta
 const AppendEventRequestSchema = Schema.Struct({
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  streamId: Schema.Union([ProjectId, ThreadId, MissionId, MemoryAggregateId]),
+  streamId: Schema.Union([ProjectId, ThreadId, MissionId]),
   type: OrchestrationEventType,
   causationEventId: Schema.NullOr(EventId),
   correlationId: Schema.NullOr(CommandId),
@@ -53,7 +52,7 @@ const OrchestrationEventPersistedRowSchema = Schema.Struct({
   eventId: EventId,
   type: OrchestrationEventType,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId, MissionId, MemoryAggregateId]),
+  aggregateId: Schema.Union([ProjectId, ThreadId, MissionId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -68,7 +67,7 @@ const ReadFromSequenceRequestSchema = Schema.Struct({
 });
 const ReadForAggregateRequestSchema = Schema.Struct({
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId, MissionId, MemoryAggregateId]),
+  aggregateId: Schema.Union([ProjectId, ThreadId, MissionId]),
   sequenceExclusive: NonNegativeInt,
   limit: Schema.Number,
 });
