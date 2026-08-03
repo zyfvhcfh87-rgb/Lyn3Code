@@ -46,6 +46,13 @@ export interface OrchestrationEventStoreShape {
     limit?: number,
   ) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
 
+  readonly readForAggregate?: (
+    aggregateKind: OrchestrationEvent["aggregateKind"],
+    aggregateId: OrchestrationEvent["aggregateId"],
+    sequenceExclusive?: number,
+    limit?: number,
+  ) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
+
   /**
    * Read all events from the beginning of the stream.
    *

@@ -1,4 +1,11 @@
-import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
+import type {
+  AgentRunId,
+  MissionId,
+  MissionTaskId,
+  OrchestrationEvent,
+  OrchestrationReadModel,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
@@ -30,6 +37,19 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  AgentRunLifecyclePayload,
+  AgentRunStartedPayload,
+  MissionCancelledPayload,
+  MissionCancellationRequestedPayload,
+  MissionCompletedPayload,
+  MissionCreatedPayload,
+  MissionFailedPayload,
+  MissionRecoveryBlockedPayload,
+  MissionStartedPayload,
+  MissionTaskCreatedPayload,
+  MissionTaskLifecyclePayload,
+  MissionTaskUpdatedPayload,
+  MissionUpdatedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -71,6 +91,30 @@ function updateThread(
   patch: ThreadPatch,
 ): OrchestrationThread[] {
   return threads.map((thread) => (thread.id === threadId ? { ...thread, ...patch } : thread));
+}
+
+function updateMission(
+  missions: NonNullable<OrchestrationReadModel["missions"]>,
+  missionId: MissionId,
+  patch: Partial<NonNullable<OrchestrationReadModel["missions"]>[number]>,
+) {
+  return missions.map((mission) => (mission.id === missionId ? { ...mission, ...patch } : mission));
+}
+
+function updateMissionTask(
+  tasks: NonNullable<OrchestrationReadModel["missionTasks"]>,
+  taskId: MissionTaskId,
+  patch: Partial<NonNullable<OrchestrationReadModel["missionTasks"]>[number]>,
+) {
+  return tasks.map((task) => (task.id === taskId ? { ...task, ...patch } : task));
+}
+
+function updateAgentRun(
+  runs: NonNullable<OrchestrationReadModel["agentRuns"]>,
+  agentRunId: AgentRunId,
+  patch: Partial<NonNullable<OrchestrationReadModel["agentRuns"]>[number]>,
+) {
+  return runs.map((run) => (run.id === agentRunId ? { ...run, ...patch } : run));
 }
 
 function decodeForEvent<A>(
@@ -187,6 +231,9 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
     snapshotSequence: 0,
     projects: [],
     threads: [],
+    missions: [],
+    missionTasks: [],
+    agentRuns: [],
     updatedAt: nowIso,
   };
 }
@@ -195,11 +242,14 @@ export function projectEvent(
   model: OrchestrationReadModel,
   event: OrchestrationEvent,
 ): Effect.Effect<OrchestrationReadModel, OrchestrationProjectorDecodeError> {
-  const nextBase: OrchestrationReadModel = {
+  const nextBase = {
     ...model,
     snapshotSequence: event.sequence,
     updatedAt: event.occurredAt,
-  };
+    missions: model.missions ?? [],
+    missionTasks: model.missionTasks ?? [],
+    agentRuns: model.agentRuns ?? [],
+  } satisfies OrchestrationReadModel;
 
   switch (event.type) {
     case "project.created":
@@ -747,6 +797,209 @@ export function projectEvent(
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities,
               updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "mission.created":
+      return decodeForEvent(MissionCreatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          missions: nextBase.missions.some((mission) => mission.id === payload.mission.id)
+            ? updateMission(nextBase.missions, payload.mission.id, payload.mission)
+            : [...nextBase.missions, payload.mission],
+        })),
+      );
+
+    case "mission.updated":
+      return decodeForEvent(MissionUpdatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          missions: updateMission(nextBase.missions, payload.missionId, {
+            ...(payload.title !== undefined ? { title: payload.title } : {}),
+            ...(payload.description !== undefined ? { description: payload.description } : {}),
+            ...(payload.status !== undefined ? { status: payload.status } : {}),
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "mission.started":
+      return decodeForEvent(MissionStartedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const mission = nextBase.missions.find((entry) => entry.id === payload.missionId);
+          return {
+            ...nextBase,
+            missions: updateMission(nextBase.missions, payload.missionId, {
+              status: "running",
+              startedAt: mission?.startedAt ?? payload.startedAt,
+              completedAt: null,
+              cancelledAt: null,
+              updatedAt: payload.startedAt,
+            }),
+          };
+        }),
+      );
+
+    case "mission.cancellation-requested":
+      return decodeForEvent(
+        MissionCancellationRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          missions: updateMission(nextBase.missions, payload.missionId, {
+            updatedAt: payload.requestedAt,
+          }),
+        })),
+      );
+
+    case "mission.cancelled":
+      return decodeForEvent(MissionCancelledPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          missions: updateMission(nextBase.missions, payload.missionId, {
+            status: "cancelled",
+            cancelledAt: payload.cancelledAt,
+            updatedAt: payload.cancelledAt,
+          }),
+        })),
+      );
+
+    case "mission.completed":
+      return decodeForEvent(MissionCompletedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          missions: updateMission(nextBase.missions, payload.missionId, {
+            status: "completed",
+            completedAt: payload.completedAt,
+            updatedAt: payload.completedAt,
+          }),
+        })),
+      );
+
+    case "mission.failed":
+      return decodeForEvent(MissionFailedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          missions: updateMission(nextBase.missions, payload.missionId, {
+            status: "failed",
+            updatedAt: payload.failedAt,
+          }),
+        })),
+      );
+
+    case "mission.recovery-blocked":
+      return decodeForEvent(
+        MissionRecoveryBlockedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          missions: updateMission(nextBase.missions, payload.missionId, {
+            status: "blocked",
+            updatedAt: payload.recoveredAt,
+          }),
+        })),
+      );
+
+    case "task.created":
+      return decodeForEvent(MissionTaskCreatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          missionTasks: nextBase.missionTasks.some((task) => task.id === payload.task.id)
+            ? updateMissionTask(nextBase.missionTasks, payload.task.id, payload.task)
+            : [...nextBase.missionTasks, payload.task],
+        })),
+      );
+
+    case "task.updated":
+      return decodeForEvent(MissionTaskUpdatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          missionTasks: updateMissionTask(nextBase.missionTasks, payload.taskId, {
+            ...(payload.title !== undefined ? { title: payload.title } : {}),
+            ...(payload.description !== undefined ? { description: payload.description } : {}),
+            ...(payload.status !== undefined ? { status: payload.status } : {}),
+            ...(payload.position !== undefined ? { position: payload.position } : {}),
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "task.started":
+    case "task.completed":
+    case "task.cancelled":
+    case "task.failed":
+      return decodeForEvent(MissionTaskLifecyclePayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          missionTasks: updateMissionTask(nextBase.missionTasks, payload.taskId, {
+            status:
+              event.type === "task.started"
+                ? "running"
+                : event.type === "task.completed"
+                  ? "completed"
+                  : event.type === "task.cancelled"
+                    ? "cancelled"
+                    : "failed",
+            ...(event.type === "task.started" ? { startedAt: payload.occurredAt } : {}),
+            ...(event.type === "task.completed" ? { completedAt: payload.occurredAt } : {}),
+            updatedAt: payload.occurredAt,
+          }),
+        })),
+      );
+
+    case "agent_run.started":
+      return decodeForEvent(AgentRunStartedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          agentRuns: nextBase.agentRuns.some((run) => run.id === payload.run.id)
+            ? updateAgentRun(nextBase.agentRuns, payload.run.id, payload.run)
+            : [...nextBase.agentRuns, payload.run],
+        })),
+      );
+
+    case "agent_run.running":
+    case "agent_run.cancellation-requested":
+    case "agent_run.completed":
+    case "agent_run.cancelled":
+    case "agent_run.failed":
+    case "agent_run.interrupted":
+      return decodeForEvent(AgentRunLifecyclePayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const status =
+            event.type === "agent_run.running"
+              ? "running"
+              : event.type === "agent_run.cancellation-requested"
+                ? "cancelling"
+                : event.type === "agent_run.completed"
+                  ? "completed"
+                  : event.type === "agent_run.cancelled"
+                    ? "cancelled"
+                    : event.type === "agent_run.failed"
+                      ? "failed"
+                      : "interrupted";
+          return {
+            ...nextBase,
+            agentRuns: updateAgentRun(nextBase.agentRuns, payload.agentRunId, {
+              status,
+              updatedAt: payload.occurredAt,
+              ...(payload.providerSessionId !== undefined
+                ? { providerSessionId: payload.providerSessionId }
+                : {}),
+              ...(status === "completed" ||
+              status === "cancelled" ||
+              status === "failed" ||
+              status === "interrupted"
+                ? { completedAt: payload.occurredAt }
+                : {}),
+              ...(payload.errorSummary !== undefined ? { errorSummary: payload.errorSummary } : {}),
             }),
           };
         }),

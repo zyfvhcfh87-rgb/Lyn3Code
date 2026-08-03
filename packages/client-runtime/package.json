@@ -67,6 +67,14 @@
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"
     },
+    "./state/missions": {
+      "types": "./src/state/missions.ts",
+      "default": "./src/state/missions.ts"
+    },
+    "./state/mission-commands": {
+      "types": "./src/state/missionCommands.ts",
+      "default": "./src/state/missionCommands.ts"
+    },
     "./state/orchestration": {
       "types": "./src/state/orchestration.ts",
       "default": "./src/state/orchestration.ts"

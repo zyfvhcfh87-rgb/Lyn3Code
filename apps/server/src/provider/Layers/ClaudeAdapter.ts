@@ -298,9 +298,24 @@ function isClaudeInterruptedCause(cause: Cause.Cause<ProviderAdapterProcessError
 }
 
 function resultErrorsText(result: SDKResultMessage): string {
-  return "errors" in result && Array.isArray(result.errors)
-    ? result.errors.join(" ").toLowerCase()
-    : "";
+  if (result.subtype === "success") {
+    return result.is_error ? result.result.toLowerCase() : "";
+  }
+
+  return result.errors.join(" ").toLowerCase();
+}
+
+function resultErrorMessage(result: SDKResultMessage): string | undefined {
+  if (result.subtype === "success") {
+    if (!result.is_error) {
+      return undefined;
+    }
+
+    const message = result.result.trim();
+    return message.length > 0 ? message : "Claude turn failed.";
+  }
+
+  return result.errors[0];
 }
 
 function isInterruptedResult(result: SDKResultMessage): boolean {
@@ -995,7 +1010,7 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
 });
 
 function turnStatusFromResult(result: SDKResultMessage): ProviderRuntimeTurnStatus {
-  if (result.subtype === "success") {
+  if (result.subtype === "success" && !result.is_error) {
     return "completed";
   }
 
@@ -2554,7 +2569,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     const status = turnStatusFromResult(message);
-    const errorMessage = message.subtype === "success" ? undefined : message.errors[0];
+    const errorMessage = resultErrorMessage(message);
 
     if (status === "failed") {
       yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
@@ -3605,6 +3620,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         threadId,
         provider: PROVIDER,
         providerInstanceId: boundInstanceId,
+        ...(sessionId ? { providerSessionId: sessionId } : {}),
         status: "ready",
         runtimeMode: input.runtimeMode,
         ...(input.cwd ? { cwd: input.cwd } : {}),

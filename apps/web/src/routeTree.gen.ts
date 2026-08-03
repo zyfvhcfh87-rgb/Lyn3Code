@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PairRouteImport } from './routes/pair'
+import { Route as MissionsRouteImport } from './routes/missions'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
@@ -23,7 +24,9 @@ import { Route as SettingsConnectionsRouteImport } from './routes/settings.conne
 import { Route as SettingsBetaRouteImport } from './routes/settings.beta'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
+import { Route as MissionsEnvironmentIdRouteImport } from './routes/missions.$environmentId'
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
+import { Route as MissionsEnvironmentIdMissionIdRouteImport } from './routes/missions.$environmentId.$missionId'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
@@ -35,6 +38,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const PairRoute = PairRouteImport.update({
   id: '/pair',
   path: '/pair',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MissionsRoute = MissionsRouteImport.update({
+  id: '/missions',
+  path: '/missions',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConnectRoute = ConnectRouteImport.update({
@@ -96,11 +104,22 @@ const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
   path: '/appearance',
   getParentRoute: () => SettingsRoute,
 } as any)
+const MissionsEnvironmentIdRoute = MissionsEnvironmentIdRouteImport.update({
+  id: '/$environmentId',
+  path: '/$environmentId',
+  getParentRoute: () => MissionsRoute,
+} as any)
 const ConnectCallbackRoute = ConnectCallbackRouteImport.update({
   id: '/connect_/callback',
   path: '/connect/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MissionsEnvironmentIdMissionIdRoute =
+  MissionsEnvironmentIdMissionIdRouteImport.update({
+    id: '/$missionId',
+    path: '/$missionId',
+    getParentRoute: () => MissionsEnvironmentIdRoute,
+  } as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
   path: '/draft/$draftId',
@@ -116,9 +135,11 @@ const ChatEnvironmentIdThreadIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
   '/connect': typeof ConnectRoute
+  '/missions': typeof MissionsRouteWithChildren
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/connect/callback': typeof ConnectCallbackRoute
+  '/missions/$environmentId': typeof MissionsEnvironmentIdRouteWithChildren
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/beta': typeof SettingsBetaRoute
@@ -130,12 +151,15 @@ export interface FileRoutesByFullPath {
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/missions/$environmentId/$missionId': typeof MissionsEnvironmentIdMissionIdRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
+  '/missions': typeof MissionsRouteWithChildren
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/connect/callback': typeof ConnectCallbackRoute
+  '/missions/$environmentId': typeof MissionsEnvironmentIdRouteWithChildren
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/beta': typeof SettingsBetaRoute
@@ -148,14 +172,17 @@ export interface FileRoutesByTo {
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/missions/$environmentId/$missionId': typeof MissionsEnvironmentIdMissionIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_chat': typeof ChatRouteWithChildren
   '/connect': typeof ConnectRoute
+  '/missions': typeof MissionsRouteWithChildren
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/connect_/callback': typeof ConnectCallbackRoute
+  '/missions/$environmentId': typeof MissionsEnvironmentIdRouteWithChildren
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/beta': typeof SettingsBetaRoute
@@ -168,15 +195,18 @@ export interface FileRoutesById {
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/missions/$environmentId/$missionId': typeof MissionsEnvironmentIdMissionIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/connect'
+    | '/missions'
     | '/pair'
     | '/settings'
     | '/connect/callback'
+    | '/missions/$environmentId'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/beta'
@@ -188,12 +218,15 @@ export interface FileRouteTypes {
     | '/settings/source-control'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/missions/$environmentId/$missionId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
+    | '/missions'
     | '/pair'
     | '/settings'
     | '/connect/callback'
+    | '/missions/$environmentId'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/beta'
@@ -206,13 +239,16 @@ export interface FileRouteTypes {
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/missions/$environmentId/$missionId'
   id:
     | '__root__'
     | '/_chat'
     | '/connect'
+    | '/missions'
     | '/pair'
     | '/settings'
     | '/connect_/callback'
+    | '/missions/$environmentId'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/beta'
@@ -225,11 +261,13 @@ export interface FileRouteTypes {
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
+    | '/missions/$environmentId/$missionId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   ChatRoute: typeof ChatRouteWithChildren
   ConnectRoute: typeof ConnectRoute
+  MissionsRoute: typeof MissionsRouteWithChildren
   PairRoute: typeof PairRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   ConnectCallbackRoute: typeof ConnectCallbackRoute
@@ -249,6 +287,13 @@ declare module '@tanstack/react-router' {
       path: '/pair'
       fullPath: '/pair'
       preLoaderRoute: typeof PairRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/missions': {
+      id: '/missions'
+      path: '/missions'
+      fullPath: '/missions'
+      preLoaderRoute: typeof MissionsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/connect': {
@@ -335,12 +380,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAppearanceRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/missions/$environmentId': {
+      id: '/missions/$environmentId'
+      path: '/$environmentId'
+      fullPath: '/missions/$environmentId'
+      preLoaderRoute: typeof MissionsEnvironmentIdRouteImport
+      parentRoute: typeof MissionsRoute
+    }
     '/connect_/callback': {
       id: '/connect_/callback'
       path: '/connect/callback'
       fullPath: '/connect/callback'
       preLoaderRoute: typeof ConnectCallbackRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/missions/$environmentId/$missionId': {
+      id: '/missions/$environmentId/$missionId'
+      path: '/$missionId'
+      fullPath: '/missions/$environmentId/$missionId'
+      preLoaderRoute: typeof MissionsEnvironmentIdMissionIdRouteImport
+      parentRoute: typeof MissionsEnvironmentIdRoute
     }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
@@ -373,6 +432,31 @@ const ChatRouteChildren: ChatRouteChildren = {
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
+interface MissionsEnvironmentIdRouteChildren {
+  MissionsEnvironmentIdMissionIdRoute: typeof MissionsEnvironmentIdMissionIdRoute
+}
+
+const MissionsEnvironmentIdRouteChildren: MissionsEnvironmentIdRouteChildren = {
+  MissionsEnvironmentIdMissionIdRoute: MissionsEnvironmentIdMissionIdRoute,
+}
+
+const MissionsEnvironmentIdRouteWithChildren =
+  MissionsEnvironmentIdRoute._addFileChildren(
+    MissionsEnvironmentIdRouteChildren,
+  )
+
+interface MissionsRouteChildren {
+  MissionsEnvironmentIdRoute: typeof MissionsEnvironmentIdRouteWithChildren
+}
+
+const MissionsRouteChildren: MissionsRouteChildren = {
+  MissionsEnvironmentIdRoute: MissionsEnvironmentIdRouteWithChildren,
+}
+
+const MissionsRouteWithChildren = MissionsRoute._addFileChildren(
+  MissionsRouteChildren,
+)
+
 interface SettingsRouteChildren {
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
@@ -404,6 +488,7 @@ const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
   ConnectRoute: ConnectRoute,
+  MissionsRoute: MissionsRouteWithChildren,
   PairRoute: PairRoute,
   SettingsRoute: SettingsRouteWithChildren,
   ConnectCallbackRoute: ConnectCallbackRoute,

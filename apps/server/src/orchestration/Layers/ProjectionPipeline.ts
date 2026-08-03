@@ -1,6 +1,7 @@
 import {
   ApprovalRequestId,
   type ChatAttachment,
+  MissionId,
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
   ThreadId,
@@ -34,6 +35,9 @@ import {
   ProjectionTurnRepository,
 } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
+import { ProjectionMissionRepository } from "../../persistence/Services/ProjectionMissions.ts";
+import { ProjectionMissionTaskRepository } from "../../persistence/Services/ProjectionMissionTasks.ts";
+import { ProjectionAgentRunRepository } from "../../persistence/Services/ProjectionAgentRuns.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
@@ -43,11 +47,15 @@ import { ProjectionThreadProposedPlanRepositoryLive } from "../../persistence/La
 import { ProjectionThreadSessionRepositoryLive } from "../../persistence/Layers/ProjectionThreadSessions.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { ProjectionThreadRepositoryLive } from "../../persistence/Layers/ProjectionThreads.ts";
+import { ProjectionMissionRepositoryLive } from "../../persistence/Layers/ProjectionMissions.ts";
+import { ProjectionMissionTaskRepositoryLive } from "../../persistence/Layers/ProjectionMissionTasks.ts";
+import { ProjectionAgentRunRepositoryLive } from "../../persistence/Layers/ProjectionAgentRuns.ts";
 import { ServerConfig } from "../../config.ts";
 import {
   OrchestrationProjectionPipeline,
   type OrchestrationProjectionPipelineShape,
 } from "../Services/ProjectionPipeline.ts";
+import { projectEvent as projectReadModelEvent } from "../projector.ts";
 import {
   attachmentRelativePath,
   parseAttachmentIdFromRelativePath,
@@ -65,6 +73,7 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   threadTurns: "projection.thread-turns",
   checkpoints: "projection.checkpoints",
   pendingApprovals: "projection.pending-approvals",
+  missions: "projection.missions",
 } as const;
 
 type ProjectorName =
@@ -480,6 +489,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionThreadSessionRepository = yield* ProjectionThreadSessionRepository;
     const projectionTurnRepository = yield* ProjectionTurnRepository;
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
+    const projectionMissionRepository = yield* ProjectionMissionRepository;
+    const projectionMissionTaskRepository = yield* ProjectionMissionTaskRepository;
+    const projectionAgentRunRepository = yield* ProjectionAgentRunRepository;
 
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -1078,6 +1090,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         status: event.payload.session.status,
         providerName: event.payload.session.providerName,
         providerInstanceId: event.payload.session.providerInstanceId ?? null,
+        providerSessionId: event.payload.session.providerSessionId ?? null,
         runtimeMode: event.payload.session.runtimeMode,
         activeTurnId: event.payload.session.activeTurnId,
         lastError: event.payload.session.lastError,
@@ -1546,6 +1559,44 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       }
     });
 
+    const applyMissionsProjection: ProjectorDefinition["apply"] = Effect.fn(
+      "applyMissionsProjection",
+    )(function* (event, _attachmentSideEffects) {
+      if (event.aggregateKind !== "mission") {
+        return;
+      }
+      const missionId = MissionId.make(event.aggregateId);
+      const [mission, tasks, runs] = yield* Effect.all([
+        projectionMissionRepository.getById({ missionId }),
+        projectionMissionTaskRepository.listByMissionId({ missionId }),
+        projectionAgentRunRepository.listByMissionId({ missionId }),
+      ]);
+      const next = yield* projectReadModelEvent(
+        {
+          snapshotSequence: Math.max(0, event.sequence - 1),
+          projects: [],
+          threads: [],
+          missions: Option.isSome(mission) ? [mission.value] : [],
+          missionTasks: tasks,
+          agentRuns: runs,
+          updatedAt: event.occurredAt,
+        },
+        event,
+      ).pipe(Effect.orDie);
+      yield* Effect.forEach(next.missions ?? [], projectionMissionRepository.upsert, {
+        concurrency: 1,
+        discard: true,
+      });
+      yield* Effect.forEach(next.missionTasks ?? [], projectionMissionTaskRepository.upsert, {
+        concurrency: 1,
+        discard: true,
+      });
+      yield* Effect.forEach(next.agentRuns ?? [], projectionAgentRunRepository.upsert, {
+        concurrency: 1,
+        discard: true,
+      });
+    });
+
     const projectors: ReadonlyArray<ProjectorDefinition> = [
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.projects,
@@ -1582,6 +1633,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.threads,
         apply: applyThreadsProjection,
+      },
+      {
+        name: ORCHESTRATION_PROJECTOR_NAMES.missions,
+        apply: applyMissionsProjection,
       },
     ];
 
@@ -1686,4 +1741,7 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionTurnRepositoryLive),
   Layer.provideMerge(ProjectionPendingApprovalRepositoryLive),
   Layer.provideMerge(ProjectionStateRepositoryLive),
+  Layer.provideMerge(ProjectionMissionRepositoryLive),
+  Layer.provideMerge(ProjectionMissionTaskRepositoryLive),
+  Layer.provideMerge(ProjectionAgentRunRepositoryLive),
 );

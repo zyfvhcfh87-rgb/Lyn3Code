@@ -781,13 +781,14 @@ it.effect("decodes orchestration session runtime mode defaults", () =>
       threadId: "thread-1",
       status: "idle",
       providerName: null,
-      providerSessionId: null,
+      providerSessionId: "provider-session-1",
       providerThreadId: null,
       activeTurnId: null,
       lastError: null,
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+    assert.strictEqual(parsed.providerSessionId, "provider-session-1");
   }),
 );
 

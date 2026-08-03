@@ -734,6 +734,26 @@ export const WsOrchestrationSubscribeThreadRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationSubscribeMissionsRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.subscribeMissions,
+  {
+    payload: OrchestrationRpcSchemas.subscribeMissions.input,
+    success: OrchestrationRpcSchemas.subscribeMissions.output,
+    error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
+    stream: true,
+  },
+);
+
+export const WsOrchestrationSubscribeMissionRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.subscribeMission,
+  {
+    payload: OrchestrationRpcSchemas.subscribeMission.input,
+    success: OrchestrationRpcSchemas.subscribeMission.output,
+    error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
+    stream: true,
+  },
+);
+
 export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
   payload: Schema.Struct({}),
   success: TerminalEvent,
@@ -863,4 +883,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsOrchestrationSubscribeMissionsRpc,
+  WsOrchestrationSubscribeMissionRpc,
 );

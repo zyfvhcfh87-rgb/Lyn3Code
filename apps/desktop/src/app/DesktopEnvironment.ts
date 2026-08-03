@@ -78,7 +78,7 @@ export class DesktopEnvironment extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
 
-const APP_BASE_NAME = "T3 Code";
+const APP_BASE_NAME = "Lyn Code";
 
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
@@ -163,6 +163,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     isDevelopment && Option.isNone(configuredBaseDir) ? "dev" : "userdata",
   );
   const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
+  // Preserve discovery of installations created before the Lyn Code rebrand.
   const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),

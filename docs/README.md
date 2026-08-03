@@ -1,9 +1,10 @@
-# T3 Code docs
+# Lyn Code docs
 
-## Using T3 Code
+## Using Lyn Code
 
 - [Install and first run](./user/install.md)
 - [Permission modes](./user/permission-modes.md)
+- [Missions](./user/missions.md)
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Remote access](./user/remote-access.md)
 - [Keeping app and server in sync](./user/updating.md)
@@ -15,12 +16,13 @@ Mobile app: [apps/mobile/README.md](../apps/mobile/README.md)
 
 ---
 
-## Working on T3 Code
+## Working on Lyn Code
 
 Everything below is for maintainers. Setup lives in the [root README](../README.md);
 policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../AGENTS.md).
 
 - [Architecture overview](./internals/overview.md)
+- [Mission architecture](./internals/missions.md)
 - [Workspace layout](./internals/workspace-layout.md)
 - [Glossary](./internals/glossary.md)
 - [Scripts](./internals/scripts.md)

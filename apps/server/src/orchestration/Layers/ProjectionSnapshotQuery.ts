@@ -3,6 +3,9 @@ import {
   CheckpointRef,
   IsoDateTime,
   MessageId,
+  type MissionSummary,
+  type OrchestrationMissionDetailSnapshot,
+  type OrchestrationEvent,
   NonNegativeInt,
   OrchestrationCheckpointFile,
   OrchestrationProposedPlanId,
@@ -33,6 +36,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
@@ -50,6 +54,14 @@ import { ProjectionThreadMessage } from "../../persistence/Services/ProjectionTh
 import { ProjectionThreadProposedPlan } from "../../persistence/Services/ProjectionThreadProposedPlans.ts";
 import { ProjectionThreadSession } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
+import { ProjectionMissionRepository } from "../../persistence/Services/ProjectionMissions.ts";
+import { ProjectionMissionTaskRepository } from "../../persistence/Services/ProjectionMissionTasks.ts";
+import { ProjectionAgentRunRepository } from "../../persistence/Services/ProjectionAgentRuns.ts";
+import { ProjectionMissionRepositoryLive } from "../../persistence/Layers/ProjectionMissions.ts";
+import { ProjectionMissionTaskRepositoryLive } from "../../persistence/Layers/ProjectionMissionTasks.ts";
+import { ProjectionAgentRunRepositoryLive } from "../../persistence/Layers/ProjectionAgentRuns.ts";
+import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
+import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
@@ -263,6 +275,7 @@ function mapSessionRow(
     status: row.status,
     providerName: row.providerName,
     ...(row.providerInstanceId !== null ? { providerInstanceId: row.providerInstanceId } : {}),
+    ...(row.providerSessionId !== null ? { providerSessionId: row.providerSessionId } : {}),
     runtimeMode: row.runtimeMode,
     activeTurnId: row.activeTurnId,
     lastError: row.lastError,
@@ -310,6 +323,27 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
 const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const repositoryIdentityResolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+  const projectionMissionRepository = yield* ProjectionMissionRepository;
+  const projectionMissionTaskRepository = yield* ProjectionMissionTaskRepository;
+  const projectionAgentRunRepository = yield* ProjectionAgentRunRepository;
+  const orchestrationEventStore = yield* OrchestrationEventStore;
+  const loadMissionState = Effect.fn("ProjectionSnapshotQuery.loadMissionState")(function* () {
+    const missions = yield* projectionMissionRepository.listAll();
+    const related = yield* Effect.forEach(
+      missions,
+      (mission) =>
+        Effect.all([
+          projectionMissionTaskRepository.listByMissionId({ missionId: mission.id }),
+          projectionAgentRunRepository.listByMissionId({ missionId: mission.id }),
+        ]),
+      { concurrency: 1 },
+    );
+    return {
+      missions,
+      missionTasks: related.flatMap(([tasks]) => tasks),
+      agentRuns: related.flatMap(([, runs]) => runs),
+    } as const;
+  });
   const repositoryIdentityResolutionConcurrency = 4;
   const resolveRepositoryIdentitiesForProjects = Effect.fn(
     "ProjectionSnapshotQuery.resolveRepositoryIdentitiesForProjects",
@@ -980,6 +1014,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           status,
           provider_name AS "providerName",
           provider_instance_id AS "providerInstanceId",
+          provider_session_id AS "providerSessionId",
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",
@@ -1069,7 +1104,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
-  const getSnapshot: ProjectionSnapshotQueryShape["getSnapshot"] = () =>
+  const getBaseSnapshot = () =>
     sql
       .withTransaction(
         Effect.all([
@@ -1287,6 +1322,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   ...(row.providerInstanceId !== null
                     ? { providerInstanceId: row.providerInstanceId }
                     : {}),
+                  ...(row.providerSessionId !== null
+                    ? { providerSessionId: row.providerSessionId }
+                    : {}),
                   runtimeMode: row.runtimeMode,
                   activeTurnId: row.activeTurnId,
                   lastError: row.lastError,
@@ -1359,7 +1397,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         }),
       );
 
-  const getCommandReadModel: ProjectionSnapshotQueryShape["getCommandReadModel"] = () =>
+  const getSnapshot: ProjectionSnapshotQueryShape["getSnapshot"] = () =>
+    Effect.gen(function* () {
+      const [base, missionState] = yield* Effect.all([getBaseSnapshot(), loadMissionState()]);
+      return { ...base, ...missionState };
+    });
+
+  const getCommandBaseReadModel = () =>
     sql
       .withTransaction(
         Effect.all([
@@ -1556,6 +1600,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           return toPersistenceSqlError("ProjectionSnapshotQuery.getCommandReadModel:query")(error);
         }),
       );
+
+  const getCommandReadModel: ProjectionSnapshotQueryShape["getCommandReadModel"] = () =>
+    Effect.gen(function* () {
+      const [base, missionState] = yield* Effect.all([
+        getCommandBaseReadModel(),
+        loadMissionState(),
+      ]);
+      return { ...base, ...missionState };
+    });
 
   const getShellSnapshot: ProjectionSnapshotQueryShape["getShellSnapshot"] = () =>
     sql
@@ -2257,7 +2310,130 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         ),
       );
 
+  const getMissionSummaryById: NonNullable<
+    ProjectionSnapshotQueryShape["getMissionSummaryById"]
+  > = (missionId) =>
+    Effect.gen(function* () {
+      const mission = yield* projectionMissionRepository.getById({ missionId });
+      if (Option.isNone(mission)) {
+        return Option.none<MissionSummary>();
+      }
+      const [tasks, runs] = yield* Effect.all([
+        projectionMissionTaskRepository.listByMissionId({ missionId }),
+        projectionAgentRunRepository.listByMissionId({ missionId }),
+      ]);
+      const orderedRuns = runs.toSorted(
+        (left, right) =>
+          right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id),
+      );
+      return Option.some({
+        mission: mission.value,
+        taskProgress: {
+          total: tasks.length,
+          completed: tasks.filter((task) => task.status === "completed").length,
+        },
+        activeAgentRun:
+          orderedRuns.find(
+            (run) =>
+              run.status === "starting" || run.status === "running" || run.status === "cancelling",
+          ) ?? null,
+        latestAgentRun: orderedRuns[0] ?? null,
+      });
+    });
+
+  const getMissionBoardSnapshot: NonNullable<
+    ProjectionSnapshotQueryShape["getMissionBoardSnapshot"]
+  > = (projectId) =>
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const missions =
+            projectId === undefined
+              ? yield* projectionMissionRepository.listAll()
+              : yield* projectionMissionRepository.listByProjectId({ projectId });
+          const summaries = yield* Effect.forEach(
+            missions,
+            (mission) => getMissionSummaryById(mission.id).pipe(Effect.map(Option.getOrThrow)),
+            { concurrency: 1 },
+          );
+          const { snapshotSequence } = yield* getSnapshotSequence();
+          return {
+            snapshotSequence,
+            projectId: projectId ?? null,
+            missions: summaries,
+            updatedAt:
+              missions
+                .map((mission) => mission.updatedAt)
+                .toSorted((left, right) => right.localeCompare(left))[0] ??
+              "1970-01-01T00:00:00.000Z",
+          };
+        }),
+      )
+      .pipe(
+        Effect.mapError((error) =>
+          isPersistenceError(error)
+            ? error
+            : toPersistenceSqlError("ProjectionSnapshotQuery.getMissionBoardSnapshot:transaction")(
+                error,
+              ),
+        ),
+      );
+
+  const getMissionDetailSnapshot: NonNullable<
+    ProjectionSnapshotQueryShape["getMissionDetailSnapshot"]
+  > = (missionId) =>
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const mission = yield* projectionMissionRepository.getById({ missionId });
+          if (Option.isNone(mission)) {
+            return Option.none<OrchestrationMissionDetailSnapshot>();
+          }
+          const missionEvents =
+            orchestrationEventStore.readForAggregate?.(
+              "mission",
+              missionId,
+              0,
+              Number.MAX_SAFE_INTEGER,
+            ) ??
+            orchestrationEventStore
+              .readAll()
+              .pipe(
+                Stream.filter(
+                  (event) => event.aggregateKind === "mission" && event.aggregateId === missionId,
+                ),
+              );
+          const [tasks, agentRuns, events, sequence] = yield* Effect.all([
+            projectionMissionTaskRepository.listByMissionId({ missionId }),
+            projectionAgentRunRepository.listByMissionId({ missionId }),
+            Stream.runCollect(missionEvents).pipe(
+              Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+            ),
+            getSnapshotSequence(),
+          ]);
+          return Option.some({
+            snapshotSequence: sequence.snapshotSequence,
+            mission: mission.value,
+            tasks,
+            agentRuns,
+            events,
+          });
+        }),
+      )
+      .pipe(
+        Effect.mapError((error) =>
+          isPersistenceError(error)
+            ? error
+            : toPersistenceSqlError("ProjectionSnapshotQuery.getMissionDetailSnapshot:transaction")(
+                error,
+              ),
+        ),
+      );
+
   return {
+    getMissionBoardSnapshot,
+    getMissionSummaryById,
+    getMissionDetailSnapshot,
     getCommandReadModel,
     getSnapshot,
     getShellSnapshot,
@@ -2279,4 +2455,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 export const OrchestrationProjectionSnapshotQueryLive = Layer.effect(
   ProjectionSnapshotQuery,
   makeProjectionSnapshotQuery,
+).pipe(
+  Layer.provide(OrchestrationEventStoreLive),
+  Layer.provideMerge(ProjectionMissionRepositoryLive),
+  Layer.provideMerge(ProjectionMissionTaskRepositoryLive),
+  Layer.provideMerge(ProjectionAgentRunRepositoryLive),
 );

@@ -35,6 +35,7 @@ import {
   FolderPlusIcon,
   LinkIcon,
   MessageSquareIcon,
+  PanelsTopLeftIcon,
   SettingsIcon,
   SquarePenIcon,
   TextSearchIcon,
@@ -1463,6 +1464,17 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:missions",
+    searchTerms: ["missions", "mission board", "tasks", "agent runs", "orchestration"],
+    title: "Open missions",
+    icon: <PanelsTopLeftIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/missions" });
+    },
+  });
 
   actionItems.push({
     kind: "action",

@@ -1,9 +1,4 @@
-import type {
-  OrchestrationEvent,
-  OrchestrationReadModel,
-  ProjectId,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { OrchestrationEvent, OrchestrationReadModel } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -57,8 +52,8 @@ interface CommandEnvelope {
 }
 
 function commandToAggregateRef(command: OrchestrationCommand): {
-  readonly aggregateKind: "project" | "thread";
-  readonly aggregateId: ProjectId | ThreadId;
+  readonly aggregateKind: OrchestrationEvent["aggregateKind"];
+  readonly aggregateId: OrchestrationEvent["aggregateId"];
 } {
   switch (command.type) {
     case "project.create":
@@ -67,6 +62,22 @@ function commandToAggregateRef(command: OrchestrationCommand): {
       return {
         aggregateKind: "project",
         aggregateId: command.projectId,
+      };
+    case "mission.create":
+    case "mission.update":
+    case "mission.task.create":
+    case "mission.task.update":
+    case "mission.start":
+    case "mission.retry":
+    case "mission.cancel":
+    case "mission.agent-run.mark-running":
+    case "mission.agent-run.complete":
+    case "mission.agent-run.fail":
+    case "mission.agent-run.cancel":
+    case "mission.agent-run.interrupt":
+      return {
+        aggregateKind: "mission",
+        aggregateId: command.missionId,
       };
     default:
       return {
