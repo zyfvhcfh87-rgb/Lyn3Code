@@ -77,9 +77,10 @@ function MissionBoardRoute() {
     if (result._tag === "Failure") {
       const description = failureMessage(result);
       toastManager.add({ type: "error", title: "Failed to create mission", description });
-      throw new Error(description);
+      return false;
     }
     toastManager.add({ type: "success", title: "Mission created" });
+    return true;
   };
 
   if (snapshot === null && streamError !== null) {

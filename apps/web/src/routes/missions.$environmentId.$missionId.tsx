@@ -67,7 +67,7 @@ function MissionDetailRoute() {
   const canMutate = connected && live && !missionTerminal;
 
   const handleAddTask = async (input: CreateMissionTaskInput) => {
-    if (!snapshot) return;
+    if (!snapshot) return false;
     const position = snapshot.tasks.reduce(
       (maximum, task) => Math.max(maximum, task.position + 1),
       0,
@@ -86,9 +86,10 @@ function MissionDetailRoute() {
     if (result._tag === "Failure") {
       const description = failureDescription(result);
       toastManager.add({ type: "error", title: "Failed to add task", description });
-      throw new Error(description);
+      return false;
     }
     toastManager.add({ type: "success", title: "Task added" });
+    return true;
   };
 
   const handleRun = async (kind: "start" | "retry", taskId?: MissionTaskId) => {

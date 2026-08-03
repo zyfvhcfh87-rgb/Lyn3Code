@@ -82,7 +82,7 @@ export function MissionWorkspace({
   readonly canMutate: boolean;
   readonly providerReady: boolean;
   readonly actionPending: boolean;
-  readonly onAddTask: (input: CreateMissionTaskInput) => Promise<void>;
+  readonly onAddTask: (input: CreateMissionTaskInput) => Promise<boolean>;
   readonly onStart: (taskId?: MissionTaskId) => Promise<void>;
   readonly onRetry: (taskId?: MissionTaskId) => Promise<void>;
   readonly onCancel: () => Promise<void>;

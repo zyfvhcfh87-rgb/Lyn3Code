@@ -37,7 +37,7 @@ export function MissionBoard({
   readonly canMutate: boolean;
   readonly onSelectedProjectChange: (projectId: string | null) => void;
   readonly onOpenAddProject: () => void;
-  readonly onCreateMission: (input: CreateMissionInput) => Promise<void>;
+  readonly onCreateMission: (input: CreateMissionInput) => Promise<boolean>;
 }) {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const projectTitleById = new Map(projects.map((project) => [project.id, project.title] as const));

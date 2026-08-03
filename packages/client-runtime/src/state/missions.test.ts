@@ -6,6 +6,9 @@ import {
   MissionId,
   MissionTaskId,
   ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  type AgentRun,
   type Mission,
   type MissionBoardSnapshot,
   type MissionTask,
@@ -51,6 +54,22 @@ const task: MissionTask = {
   updatedAt: NOW,
   startedAt: null,
   completedAt: null,
+};
+
+const agentRun: AgentRun = {
+  id: agentRunId,
+  missionId,
+  taskId,
+  threadId: ThreadId.make("thread-1"),
+  provider: "codex",
+  providerInstanceId: ProviderInstanceId.make("provider-instance-1"),
+  providerSessionId: null,
+  status: "starting",
+  createdAt: NOW,
+  startedAt: NOW,
+  updatedAt: NOW,
+  completedAt: null,
+  errorSummary: null,
 };
 
 const boardSnapshot: MissionBoardSnapshot = {
@@ -192,5 +211,45 @@ describe("mission stream reducers", () => {
     });
 
     expect(Option.getOrThrow(retried.snapshot).tasks[0]?.startedAt).toBe(retryStartedAt);
+  });
+
+  it("projects provider session association and an explicit unlink from running events", () => {
+    const hydrated = applyMissionDetailStreamItem(EMPTY_ENVIRONMENT_MISSION_DETAIL_STATE, {
+      kind: "snapshot",
+      snapshot: { ...detailSnapshot, agentRuns: [agentRun] },
+    });
+    const linked = applyMissionDetailStreamItem(hydrated, {
+      kind: "event",
+      event: missionEvent({
+        sequence: 5,
+        type: "agent_run.running",
+        payload: {
+          missionId,
+          taskId,
+          agentRunId,
+          providerSessionId: "provider-session-1",
+          occurredAt: NOW,
+        },
+      }),
+    });
+    const unlinked = applyMissionDetailStreamItem(linked, {
+      kind: "event",
+      event: missionEvent({
+        sequence: 6,
+        type: "agent_run.running",
+        payload: {
+          missionId,
+          taskId,
+          agentRunId,
+          providerSessionId: null,
+          occurredAt: NOW,
+        },
+      }),
+    });
+
+    expect(Option.getOrThrow(linked.snapshot).agentRuns[0]?.providerSessionId).toBe(
+      "provider-session-1",
+    );
+    expect(Option.getOrThrow(unlinked.snapshot).agentRuns[0]?.providerSessionId).toBeNull();
   });
 });

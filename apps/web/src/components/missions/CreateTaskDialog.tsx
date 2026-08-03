@@ -25,7 +25,7 @@ export function CreateTaskDialog({
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
-  readonly onCreate: (input: CreateMissionTaskInput) => Promise<void>;
+  readonly onCreate: (input: CreateMissionTaskInput) => Promise<boolean>;
 }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -46,7 +46,11 @@ export function CreateTaskDialog({
 
     setIsSubmitting(true);
     try {
-      await onCreate({ title: normalizedTitle, description: description.trim() });
+      const created = await onCreate({
+        title: normalizedTitle,
+        description: description.trim(),
+      });
+      if (!created) return;
       setTitle("");
       setDescription("");
       onOpenChange(false);

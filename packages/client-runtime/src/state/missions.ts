@@ -52,6 +52,8 @@ export const EMPTY_ENVIRONMENT_MISSION_DETAIL_STATE: EnvironmentMissionDetailSta
   error: Option.none(),
 };
 
+const MISSION_STATE_IDLE_TTL_MS = 5 * 60_000;
+
 function statusWithoutLiveData(snapshot: Option.Option<unknown>): MissionSynchronizationStatus {
   return Option.isSome(snapshot) ? "cached" : "empty";
 }
@@ -235,6 +237,9 @@ function applyMissionEventToSnapshot(
       agentRuns = updateAgentRun(agentRuns, event.payload.agentRunId, (run) => ({
         ...run,
         status: "running",
+        ...(event.payload.providerSessionId === undefined
+          ? {}
+          : { providerSessionId: event.payload.providerSessionId }),
         updatedAt: event.payload.occurredAt,
       }));
       break;
@@ -477,31 +482,41 @@ export function createMissionStateAtoms<R, E>(
 ) {
   const boardFamily = Atom.family((key: string) => {
     const target = parseBoardKey(key);
-    return runtime.atom(
-      followStreamInEnvironment(
-        target.environmentId,
-        Stream.unwrap(
-          makeMissionBoardState(target.projectId).pipe(
-            Effect.map((state) => SubscriptionRef.changes(state)),
+    return runtime
+      .atom(
+        followStreamInEnvironment(
+          target.environmentId,
+          Stream.unwrap(
+            makeMissionBoardState(target.projectId).pipe(
+              Effect.map((state) => SubscriptionRef.changes(state)),
+            ),
           ),
         ),
-      ),
-      { initialValue: EMPTY_ENVIRONMENT_MISSION_BOARD_STATE },
-    );
+        { initialValue: EMPTY_ENVIRONMENT_MISSION_BOARD_STATE },
+      )
+      .pipe(
+        Atom.setIdleTTL(MISSION_STATE_IDLE_TTL_MS),
+        Atom.withLabel(`environment-mission-board:${key}`),
+      );
   });
   const detailFamily = Atom.family((key: string) => {
     const target = parseDetailKey(key);
-    return runtime.atom(
-      followStreamInEnvironment(
-        target.environmentId,
-        Stream.unwrap(
-          makeMissionDetailState(target.missionId).pipe(
-            Effect.map((state) => SubscriptionRef.changes(state)),
+    return runtime
+      .atom(
+        followStreamInEnvironment(
+          target.environmentId,
+          Stream.unwrap(
+            makeMissionDetailState(target.missionId).pipe(
+              Effect.map((state) => SubscriptionRef.changes(state)),
+            ),
           ),
         ),
-      ),
-      { initialValue: EMPTY_ENVIRONMENT_MISSION_DETAIL_STATE },
-    );
+        { initialValue: EMPTY_ENVIRONMENT_MISSION_DETAIL_STATE },
+      )
+      .pipe(
+        Atom.setIdleTTL(MISSION_STATE_IDLE_TTL_MS),
+        Atom.withLabel(`environment-mission-detail:${key}`),
+      );
   });
 
   return {

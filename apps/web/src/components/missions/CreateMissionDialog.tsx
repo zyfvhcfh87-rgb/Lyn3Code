@@ -36,7 +36,7 @@ export function CreateMissionDialog({
   readonly projects: ReadonlyArray<CreateMissionProjectOption>;
   readonly selectedProjectId: string | null;
   readonly onOpenChange: (open: boolean) => void;
-  readonly onCreate: (input: CreateMissionInput) => Promise<void>;
+  readonly onCreate: (input: CreateMissionInput) => Promise<boolean>;
 }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -59,11 +59,12 @@ export function CreateMissionDialog({
 
     setIsSubmitting(true);
     try {
-      await onCreate({
+      const created = await onCreate({
         projectId,
         title: normalizedTitle,
         description: description.trim(),
       });
+      if (!created) return;
       setTitle("");
       setDescription("");
       onOpenChange(false);
