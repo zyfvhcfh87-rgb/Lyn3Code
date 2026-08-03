@@ -28,6 +28,7 @@ import { Route as SettingsAppearanceRouteImport } from './routes/settings.appear
 import { Route as MissionsEnvironmentIdRouteImport } from './routes/missions.$environmentId'
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as MissionsEnvironmentIdMissionIdRouteImport } from './routes/missions.$environmentId.$missionId'
+import { Route as MemoryEnvironmentIdProjectIdRouteImport } from './routes/memory.$environmentId.$projectId'
 import { Route as GithubEnvironmentIdProjectIdRouteImport } from './routes/github.$environmentId.$projectId'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
@@ -127,6 +128,12 @@ const MissionsEnvironmentIdMissionIdRoute =
     path: '/$missionId',
     getParentRoute: () => MissionsEnvironmentIdRoute,
   } as any)
+const MemoryEnvironmentIdProjectIdRoute =
+  MemoryEnvironmentIdProjectIdRouteImport.update({
+    id: '/memory/$environmentId/$projectId',
+    path: '/memory/$environmentId/$projectId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const GithubEnvironmentIdProjectIdRoute =
   GithubEnvironmentIdProjectIdRouteImport.update({
     id: '/github/$environmentId/$projectId',
@@ -166,6 +173,7 @@ export interface FileRoutesByFullPath {
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/github/$environmentId/$projectId': typeof GithubEnvironmentIdProjectIdRoute
+  '/memory/$environmentId/$projectId': typeof MemoryEnvironmentIdProjectIdRoute
   '/missions/$environmentId/$missionId': typeof MissionsEnvironmentIdMissionIdRoute
 }
 export interface FileRoutesByTo {
@@ -189,6 +197,7 @@ export interface FileRoutesByTo {
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/github/$environmentId/$projectId': typeof GithubEnvironmentIdProjectIdRoute
+  '/memory/$environmentId/$projectId': typeof MemoryEnvironmentIdProjectIdRoute
   '/missions/$environmentId/$missionId': typeof MissionsEnvironmentIdMissionIdRoute
 }
 export interface FileRoutesById {
@@ -214,6 +223,7 @@ export interface FileRoutesById {
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/github/$environmentId/$projectId': typeof GithubEnvironmentIdProjectIdRoute
+  '/memory/$environmentId/$projectId': typeof MemoryEnvironmentIdProjectIdRoute
   '/missions/$environmentId/$missionId': typeof MissionsEnvironmentIdMissionIdRoute
 }
 export interface FileRouteTypes {
@@ -239,6 +249,7 @@ export interface FileRouteTypes {
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/github/$environmentId/$projectId'
+    | '/memory/$environmentId/$projectId'
     | '/missions/$environmentId/$missionId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -262,6 +273,7 @@ export interface FileRouteTypes {
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/github/$environmentId/$projectId'
+    | '/memory/$environmentId/$projectId'
     | '/missions/$environmentId/$missionId'
   id:
     | '__root__'
@@ -286,6 +298,7 @@ export interface FileRouteTypes {
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
     | '/github/$environmentId/$projectId'
+    | '/memory/$environmentId/$projectId'
     | '/missions/$environmentId/$missionId'
   fileRoutesById: FileRoutesById
 }
@@ -297,6 +310,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRouteWithChildren
   ConnectCallbackRoute: typeof ConnectCallbackRoute
   GithubEnvironmentIdProjectIdRoute: typeof GithubEnvironmentIdProjectIdRoute
+  MemoryEnvironmentIdProjectIdRoute: typeof MemoryEnvironmentIdProjectIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -434,6 +448,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MissionsEnvironmentIdMissionIdRouteImport
       parentRoute: typeof MissionsEnvironmentIdRoute
     }
+    '/memory/$environmentId/$projectId': {
+      id: '/memory/$environmentId/$projectId'
+      path: '/memory/$environmentId/$projectId'
+      fullPath: '/memory/$environmentId/$projectId'
+      preLoaderRoute: typeof MemoryEnvironmentIdProjectIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/github/$environmentId/$projectId': {
       id: '/github/$environmentId/$projectId'
       path: '/github/$environmentId/$projectId'
@@ -535,6 +556,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRouteWithChildren,
   ConnectCallbackRoute: ConnectCallbackRoute,
   GithubEnvironmentIdProjectIdRoute: GithubEnvironmentIdProjectIdRoute,
+  MemoryEnvironmentIdProjectIdRoute: MemoryEnvironmentIdProjectIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
