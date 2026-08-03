@@ -81,6 +81,17 @@ export class MissionProjectionValidationError extends Schema.TaggedErrorClass<Mi
     return `Mission projection validation failed in ${this.operation}: ${this.issue}`;
   }
 }
+export class VerificationProjectionValidationError extends Schema.TaggedErrorClass<VerificationProjectionValidationError>()(
+  "VerificationProjectionValidationError",
+  {
+    operation: Schema.String,
+    issue: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Verification projection validation failed in ${this.operation}: ${this.issue}`;
+  }
+}
 const isPersistenceSqlError = Schema.is(PersistenceSqlError);
 const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
 
@@ -150,4 +161,5 @@ export type AuthSessionRepositoryError = PersistenceSqlError | PersistenceDecode
 export type ProjectionRepositoryError =
   | PersistenceSqlError
   | PersistenceDecodeError
-  | MissionProjectionValidationError;
+  | MissionProjectionValidationError
+  | VerificationProjectionValidationError;

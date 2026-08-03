@@ -55,6 +55,7 @@ import {
   MissionSchedulerLifecyclePayload as ContractsMissionSchedulerLifecyclePayloadSchema,
   MissionSchedulerConcurrencyLimitedPayload as ContractsMissionSchedulerConcurrencyLimitedPayloadSchema,
   MissionIntegrationLifecyclePayload as ContractsMissionIntegrationLifecyclePayloadSchema,
+  VerificationRunLifecyclePayload as ContractsVerificationRunLifecyclePayloadSchema,
 } from "@t3tools/contracts";
 
 // Server-internal alias surface, backed by contract schemas as the source of truth.
@@ -128,3 +129,4 @@ export const MissionSchedulerLifecyclePayload = ContractsMissionSchedulerLifecyc
 export const MissionSchedulerConcurrencyLimitedPayload =
   ContractsMissionSchedulerConcurrencyLimitedPayloadSchema;
 export const MissionIntegrationLifecyclePayload = ContractsMissionIntegrationLifecyclePayloadSchema;
+export const VerificationRunLifecyclePayload = ContractsVerificationRunLifecyclePayloadSchema;

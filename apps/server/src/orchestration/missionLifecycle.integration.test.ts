@@ -10,6 +10,11 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  VerificationProfileId,
+  VerificationRunId,
+  VerificationRepairAttemptId,
+  VerificationCheckDefinitionId,
+  VerificationGateId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -119,6 +124,87 @@ function startMission(
   });
 }
 
+function recordPassingVerification(
+  harness: MissionHarness,
+  input: {
+    readonly selectedTaskId?: MissionTaskId;
+    readonly worktreeId?: ManagedWorktreeId | null;
+    readonly agentRunId?: AgentRunId;
+    readonly suffix?: string;
+    readonly completedAt?: string;
+  } = {},
+) {
+  const suffix = input.suffix ?? "default";
+  const completedAt = input.completedAt ?? "2026-08-03T00:00:07.000Z";
+  const profileId = VerificationProfileId.make("standard");
+  const sourceFingerprint = `source-fingerprint-${suffix}`;
+  const source = {
+    worktreeRoot: `/tmp/verification-${suffix}`,
+    branchName: `agent/mission/${suffix}`,
+    commitHash: "1111111111111111111111111111111111111111",
+    dirtyStateFingerprint: null,
+    sourceFingerprint,
+  } as const;
+  const environment = {
+    platform: "win32",
+    architecture: "x64",
+    runtimeVersions: {},
+    continuousIntegration: false,
+  } as const;
+  const configurationRevision = `configuration-revision-${suffix}`;
+  const configurationDigest = `configuration-digest-${suffix}`;
+  return dispatchCommand(harness, {
+    type: "verification.run.record",
+    commandId: commandId(`command-verification-passed-${suffix}`),
+    action: "passed",
+    occurredAt: completedAt,
+    run: {
+      id: VerificationRunId.make(`verification-run-${suffix}`),
+      projectId,
+      missionId,
+      taskId: input.selectedTaskId ?? taskId,
+      worktreeId: input.worktreeId ?? null,
+      agentRunId: input.agentRunId ?? firstRunId,
+      profileId,
+      requestedBy: "test",
+      trigger: "task_completion",
+      authorizationScope: "full_profile",
+      sourceVerificationRunId: null,
+      status: "passed",
+      configurationRevision,
+      configurationDigest,
+      branchName: source.branchName,
+      commitHash: source.commitHash,
+      dirtyStateFingerprint: null,
+      sourceFingerprint,
+      changedFilesSnapshot: [],
+      environmentSnapshot: environment,
+      executionPlan: {
+        version: 1,
+        profileId,
+        profileName: "Standard",
+        configurationPath: "/tmp/t3.json",
+        configurationRevision,
+        configurationDigest,
+        source,
+        changedFiles: [],
+        environment,
+        gates: [],
+        skippedChecks: [],
+        createdAt: "2026-08-03T00:00:06.500Z",
+      },
+      startedAt: "2026-08-03T00:00:06.500Z",
+      completedAt,
+      cancelledAt: null,
+      result: "passed",
+      failureSummary: null,
+      invalidatedAt: null,
+      invalidationReason: null,
+      createdAt: "2026-08-03T00:00:06.500Z",
+    },
+  });
+}
+
 function assertTerminalTaskMutationsRejected(harness: MissionHarness, suffix: string) {
   return Effect.gen(function* () {
     const newTask = yield* Effect.flip(
@@ -156,7 +242,7 @@ function assertTerminalTaskMutationsRejected(harness: MissionHarness, suffix: st
 }
 
 it.layer(NodeServices.layer)("mission lifecycle integration", (it) => {
-  it.effect("orders a complete single-agent lifecycle and projects terminal state", () =>
+  it.effect("holds implementation completion for evidence-backed verification", () =>
     Effect.gen(function* () {
       let harness = yield* seedMission();
       harness = yield* startMission(harness);
@@ -179,12 +265,22 @@ it.layer(NodeServices.layer)("mission lifecycle integration", (it) => {
         commandId: commandId("command-run-complete"),
         missionId,
         agentRunId: firstRunId,
+        requiresVerification: true,
         completedAt: "2026-08-03T00:00:06.000Z",
       });
 
       expect(harness.events.slice(-4).map((event) => event.type)).toEqual([
         "agent_run.running",
         "agent_run.completed",
+        "task.implementation-completed",
+        "mission.updated",
+      ]);
+      expect(harness.model.missions?.[0]?.status).toBe("verification");
+      expect(harness.model.missionTasks?.[0]?.status).toBe("verification");
+
+      harness = yield* recordPassingVerification(harness);
+      expect(harness.events.slice(-3).map((event) => event.type)).toEqual([
+        "verification.passed",
         "task.completed",
         "mission.completed",
       ]);
@@ -221,6 +317,78 @@ it.layer(NodeServices.layer)("mission lifecycle integration", (it) => {
         }),
       );
       expect(duplicate.message).toContain("cannot transition from 'completed' to 'completed'");
+    }),
+  );
+
+  it.effect("preserves Phase 2 completion when verification is not configured", () =>
+    Effect.gen(function* () {
+      let harness = yield* seedMission();
+      harness = yield* startMission(harness);
+      harness = yield* dispatchCommand(harness, {
+        type: "mission.agent-run.complete",
+        commandId: commandId("command-phase-two-compatible-complete"),
+        missionId,
+        agentRunId: firstRunId,
+        completedAt: "2026-08-03T00:00:06.500Z",
+      });
+
+      expect(harness.events.slice(-3).map((event) => event.type)).toEqual([
+        "agent_run.completed",
+        "task.completed",
+        "mission.completed",
+      ]);
+      expect(harness.model.missions?.[0]?.status).toBe("completed");
+      expect(harness.model.missionTasks?.[0]?.status).toBe("completed");
+    }),
+  );
+
+  it.effect("records an explicit configuration failure for an unresolvable request", () =>
+    Effect.gen(function* () {
+      let harness = yield* seedMission();
+      harness = yield* dispatchCommand(harness, {
+        type: "verification.request.reject",
+        commandId: commandId("command-verification-request-rejected"),
+        projectId,
+        missionId,
+        taskId,
+        failureCategory: "configuration_error",
+        summary: "The accepted verification profile no longer exists.",
+        occurredAt: "2026-08-03T00:00:06.750Z",
+      });
+
+      expect(harness.events.at(-1)?.type).toBe("verification.request_failed");
+      expect(harness.events.at(-1)?.payload).toMatchObject({
+        taskId,
+        failureCategory: "configuration_error",
+        summary: "The accepted verification profile no longer exists.",
+      });
+    }),
+  );
+
+  it.effect("records an explicit failed-gate rerun scope without broadening it", () =>
+    Effect.gen(function* () {
+      let harness = yield* seedMission();
+      const sourceVerificationRunId = VerificationRunId.make("verification-run-failed-source");
+      const gateId = VerificationGateId.make("verification-gate-typecheck");
+      harness = yield* dispatchCommand(harness, {
+        type: "verification.request",
+        commandId: commandId("command-verification-rerun-gate"),
+        projectId,
+        missionId,
+        taskId,
+        worktreeId: null,
+        profileId: null,
+        requestedBy: "test",
+        trigger: "retry_failed_gate",
+        scope: { kind: "failed_gate", sourceVerificationRunId, gateId },
+        requestedAt: "2026-08-03T00:00:06.800Z",
+      });
+
+      expect(harness.events.at(-1)?.type).toBe("verification.requested");
+      expect(harness.events.at(-1)?.payload).toMatchObject({
+        trigger: "retry_failed_gate",
+        scope: { kind: "failed_gate", sourceVerificationRunId, gateId },
+      });
     }),
   );
 
@@ -279,6 +447,84 @@ it.layer(NodeServices.layer)("mission lifecycle integration", (it) => {
         }),
       );
       expect(lateCompletion.message).toContain("cannot transition from 'cancelled' to 'completed'");
+    }),
+  );
+
+  it.effect("invalidates stale evidence and refuses a skipped required check", () =>
+    Effect.gen(function* () {
+      let harness = yield* seedMission();
+      harness = yield* startMission(harness);
+      harness = yield* dispatchCommand(harness, {
+        type: "mission.agent-run.complete",
+        commandId: commandId("command-invalidation-implementation-complete"),
+        missionId,
+        agentRunId: firstRunId,
+        requiresVerification: true,
+        completedAt: "2026-08-03T00:00:10.000Z",
+      });
+      harness = yield* recordPassingVerification(harness, {
+        suffix: "invalidation",
+        completedAt: "2026-08-03T00:00:11.000Z",
+      });
+      const passed = harness.events.find(
+        (event): event is Extract<OrchestrationEvent, { type: "verification.passed" }> =>
+          event.type === "verification.passed",
+      );
+      expect(passed).toBeDefined();
+      if (passed === undefined) return;
+
+      harness = yield* dispatchCommand(harness, {
+        type: "verification.run.record",
+        commandId: commandId("command-verification-invalidated"),
+        action: "invalidated",
+        occurredAt: "2026-08-03T00:00:12.000Z",
+        run: {
+          ...passed.payload.run,
+          status: "invalidated",
+          invalidatedAt: "2026-08-03T00:00:12.000Z",
+          invalidationReason: "The assigned worktree source fingerprint changed.",
+        },
+      });
+      expect(harness.model.missions?.[0]?.status).toBe("verification");
+      expect(harness.model.missionTasks?.[0]?.status).toBe("verification");
+
+      const skippedRequired = yield* Effect.flip(
+        decideOrchestrationCommand({
+          readModel: harness.model,
+          command: {
+            type: "verification.run.record",
+            commandId: commandId("command-skipped-required-false-pass"),
+            action: "passed",
+            occurredAt: "2026-08-03T00:00:13.000Z",
+            run: {
+              ...passed.payload.run,
+              id: VerificationRunId.make("verification-run-skipped-required"),
+              executionPlan: {
+                ...passed.payload.run.executionPlan,
+                skippedChecks: [
+                  {
+                    checkDefinitionId:
+                      passed.payload.run.executionPlan.gates[0]?.checks[0]?.checkDefinitionId ??
+                      VerificationCheckDefinitionId.make("required-check"),
+                    gateId:
+                      passed.payload.run.executionPlan.gates[0]?.gateId ??
+                      VerificationGateId.make("required-gate"),
+                    name: "Required check",
+                    reason: "Heuristic claimed it was irrelevant.",
+                    required: true,
+                    explicitlyNotApplicable: false,
+                    selectionSource: "explicit_configuration",
+                  },
+                ],
+              },
+              status: "passed",
+              invalidatedAt: null,
+              invalidationReason: null,
+            },
+          },
+        }),
+      );
+      expect(skippedRequired.message).toContain("cannot authorize");
     }),
   );
 
@@ -391,7 +637,12 @@ it.layer(NodeServices.layer)("mission lifecycle integration", (it) => {
         commandId: commandId("command-terminal-complete"),
         missionId,
         agentRunId: firstRunId,
+        requiresVerification: true,
         completedAt: "2026-08-03T00:04:00.000Z",
+      });
+      harness = yield* recordPassingVerification(harness, {
+        suffix: "terminal",
+        completedAt: "2026-08-03T00:04:01.000Z",
       });
 
       expect(harness.model.missions?.[0]?.status).toBe("completed");
@@ -584,12 +835,48 @@ it.layer(NodeServices.layer)("mission lifecycle integration", (it) => {
         commandId: commandId("command-phase-two-first-complete"),
         missionId,
         agentRunId: firstRunId,
+        requiresVerification: true,
         completedAt: "2026-08-03T00:07:04.000Z",
       });
       expect(harness.model.missions?.[0]?.status).toBe("running");
       expect(harness.model.missionTasks?.find((task) => task.id === taskId)?.status).toBe(
-        "completed",
+        "verification",
       );
+      const repairRunId = AgentRunId.make("mission-run-phase-two-repair");
+      harness = yield* dispatchCommand(harness, {
+        type: "mission.start",
+        commandId: commandId("command-phase-two-repair-start"),
+        missionId,
+        taskId,
+        agentRunId: repairRunId,
+        threadId: ThreadId.make("thread-phase-two-repair"),
+        providerInstanceId,
+        modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+        runtimeMode: "auto-accept-edits",
+        missionAgentId: firstAgentId,
+        worktreeId: firstWorktreeId,
+        permissions: ["read_files", "search_repository", "run_tests", "write_files"],
+        writeCapable: true,
+        purpose: "verification_repair",
+        repairAttemptId: VerificationRepairAttemptId.make("repair-attempt-phase-two"),
+        createdAt: "2026-08-03T00:07:04.100Z",
+      });
+      harness = yield* dispatchCommand(harness, {
+        type: "mission.agent-run.complete",
+        commandId: commandId("command-phase-two-repair-complete"),
+        missionId,
+        agentRunId: repairRunId,
+        completedAt: "2026-08-03T00:07:04.200Z",
+      });
+      expect(harness.model.missionTasks?.find((task) => task.id === taskId)?.status).toBe(
+        "verification",
+      );
+      expect(harness.events.at(-2)?.type).toBe("agent_run.completed");
+      harness = yield* recordPassingVerification(harness, {
+        worktreeId: firstWorktreeId,
+        suffix: "phase-two-first",
+        completedAt: "2026-08-03T00:07:04.250Z",
+      });
       expect(
         harness.model.managedWorktrees?.find((worktree) => worktree.id === firstWorktreeId)?.status,
       ).toBe("integration_ready");

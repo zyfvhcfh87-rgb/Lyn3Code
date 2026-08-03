@@ -14,6 +14,7 @@ import * as HttpResponseCompression from "./httpCompression/HttpResponseCompress
 import {
   otlpTracesProxyRouteLayer,
   assetRouteLayer,
+  verificationArtifactRouteLayer,
   serverEnvironmentHttpApiLayer,
   staticAndDevRouteLayer,
   browserApiCorsLayer,
@@ -56,6 +57,25 @@ import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRun
 import { MissionRunReactorLive } from "./orchestration/Layers/MissionRunReactor.ts";
 import { MissionSchedulerReactorLive } from "./orchestration/Layers/MissionSchedulerReactor.ts";
 import { MissionWorktreeReactorLive } from "./orchestration/Layers/MissionWorktreeReactor.ts";
+import { VerificationOrchestrationReactorLive } from "./orchestration/Layers/VerificationOrchestrationReactor.ts";
+import { ProjectionVerificationConfigurationRepositoryLive } from "./persistence/Layers/ProjectionVerificationConfiguration.ts";
+import { ProjectionVerificationRunRepositoryLive } from "./persistence/Layers/ProjectionVerificationRuns.ts";
+import { ProjectionGitHubWorkspaceRepositoryLive } from "./persistence/Layers/ProjectionGitHubWorkspace.ts";
+import { ProjectionProjectRepositoryLive } from "./persistence/Layers/ProjectionProjects.ts";
+import * as VerificationArtifactCollector from "./verification/VerificationArtifactCollector.ts";
+import * as VerificationConfig from "./verification/VerificationConfig.ts";
+import * as VerificationEngine from "./verification/VerificationEngine.ts";
+import * as VerificationLogStore from "./verification/VerificationLogStore.ts";
+import * as VerificationPathGuard from "./verification/VerificationPathGuard.ts";
+import * as VerificationPlan from "./verification/VerificationPlan.ts";
+import * as VerificationProcessRunner from "./verification/VerificationProcessRunner.ts";
+import * as VerificationSourceCapture from "./verification/VerificationSourceCapture.ts";
+import * as VerificationQuery from "./verification/VerificationQueryService.ts";
+import * as GitHubApiClient from "./github/GitHubApiClient.ts";
+import * as GitHubEventRecorder from "./github/GitHubEventRecorder.ts";
+import * as GitHubGitSafety from "./github/GitHubGitSafety.ts";
+import * as GitHubWorkspace from "./github/GitHubWorkspaceService.ts";
+import * as GitHubWorkflow from "./github/GitHubWorkflowService.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
@@ -216,11 +236,80 @@ const PlatformServicesLive = Layer.unwrap(
   }),
 );
 
+const VerificationEngineLayerLive = VerificationEngine.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      VerificationArtifactCollector.layer,
+      VerificationLogStore.layer,
+      VerificationPathGuard.layer,
+      VerificationProcessRunner.layer,
+      VerificationSourceCapture.layer,
+    ),
+  ),
+);
+
+const VerificationRuntimeDependenciesLive = Layer.mergeAll(
+  ProjectionVerificationConfigurationRepositoryLive,
+  ProjectionVerificationRunRepositoryLive,
+  VerificationConfig.layer,
+  VerificationPlan.layer,
+  VerificationEngineLayerLive,
+);
+
+const VerificationQueryLayerLive = VerificationQuery.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(VerificationRuntimeDependenciesLive, ProjectionProjectRepositoryLive),
+  ),
+);
+
+const GitHubApiClientLayerLive = GitHubApiClient.layer.pipe(Layer.provide(GitHubCli.layer));
+const GitHubGitSafetyLayerLive = GitHubGitSafety.layer.pipe(Layer.provide(GitVcsDriver.layer));
+const GitHubEventRecorderLayerLive = GitHubEventRecorder.layer.pipe(
+  Layer.provide(OrchestrationLayerLive),
+);
+const GitHubWorkspaceLayerLive = GitHubWorkspace.layer.pipe(
+  Layer.provideMerge(GitHubApiClientLayerLive),
+  Layer.provideMerge(ProjectionGitHubWorkspaceRepositoryLive),
+  Layer.provideMerge(ProjectionProjectRepositoryLive),
+  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(GitHubEventRecorderLayerLive),
+);
+const GitHubWorkflowLayerLive = GitHubWorkflow.layer.pipe(
+  Layer.provideMerge(GitHubWorkspaceLayerLive),
+  Layer.provideMerge(GitHubApiClientLayerLive),
+  Layer.provideMerge(GitHubGitSafetyLayerLive),
+  Layer.provideMerge(GitHubEventRecorderLayerLive),
+  Layer.provideMerge(ProjectionGitHubWorkspaceRepositoryLive),
+  Layer.provideMerge(ProjectionProjectRepositoryLive),
+  Layer.provideMerge(VerificationQueryLayerLive),
+  Layer.provideMerge(OrchestrationLayerLive),
+);
+const GitHubBackgroundSyncLayerLive = Layer.effectDiscard(
+  GitHubWorkspace.GitHubWorkspaceService.pipe(
+    Effect.flatMap((service) => service.startBackgroundRefresh()),
+  ),
+).pipe(Layer.provide(GitHubWorkspaceLayerLive));
+const GitHubRuntimeLayerLive = Layer.mergeAll(
+  ProjectionGitHubWorkspaceRepositoryLive,
+  GitHubWorkspaceLayerLive,
+  GitHubWorkflowLayerLive,
+  GitHubBackgroundSyncLayerLive,
+);
+const GitHubEnvironmentRuntimeLayerLive = Layer.mergeAll(
+  VerificationQueryLayerLive,
+  ServerEnvironment.layer,
+  GitHubRuntimeLayerLive,
+).pipe(Layer.provideMerge(RepositoryIdentityResolver.layer));
+
 const MissionRuntimeLayerLive = Layer.mergeAll(
   MissionRunReactorLive,
   MissionSchedulerReactorLive,
   MissionWorktreeReactorLive,
-).pipe(Layer.provideMerge(MissionGit.layer));
+  VerificationOrchestrationReactorLive,
+).pipe(
+  Layer.provideMerge(MissionGit.layer),
+  Layer.provideMerge(VerificationRuntimeDependenciesLive),
+);
 
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
@@ -384,10 +473,8 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLayerLive),
-  Layer.provideMerge(RepositoryIdentityResolver.layer),
-  Layer.provideMerge(ServerEnvironment.layer),
-  Layer.provideMerge(AuthLayerLive),
-  Layer.provideMerge(ServerSecretStore.layer),
+  Layer.provideMerge(GitHubEnvironmentRuntimeLayerLive),
+  Layer.provideMerge(Layer.mergeAll(AuthLayerLive, ServerSecretStore.layer)),
   Layer.provideMerge(
     Layer.mergeAll(
       CloudCliTokenManager.layer.pipe(
@@ -429,6 +516,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     ),
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
+    verificationArtifactRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),

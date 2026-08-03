@@ -28,6 +28,12 @@ import {
   TrimmedNonEmptyString,
   TrimmedString,
   TurnId,
+  VerificationCheckRunId,
+  VerificationGateId,
+  VerificationOverrideId,
+  VerificationProfileId,
+  VerificationRepairAttemptId,
+  VerificationRunId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
@@ -36,6 +42,7 @@ import {
   AgentPermissions,
   AgentRole,
   AgentRun,
+  AgentRunPurpose,
   ManagedWorktree,
   ManagedWorktreeStatus,
   Mission,
@@ -50,6 +57,27 @@ import {
   TaskDependency,
   TaskIntegrationStatus,
 } from "./mission.ts";
+import {
+  VerificationArtifact,
+  VerificationCheckRun,
+  VerificationDiagnostic,
+  VerificationFailureCategory,
+  VerificationOverride,
+  VerificationProfile,
+  VerificationProjectSettings,
+  VerificationRepairAttempt,
+  VerificationRequestScope,
+  VerificationRun,
+  VerificationRunTrigger,
+} from "./verification.ts";
+import {
+  GitHubAccountId,
+  GitHubIssueRecordId,
+  PullRequestRecordId,
+  RepositoryConnectionId,
+  ReviewCommentRecordId,
+  ReviewThreadRecordId,
+} from "./github.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -892,6 +920,8 @@ const MissionRunStartFields = {
   attemptNumber: Schema.optional(PositiveInt),
   permissions: Schema.optional(AgentPermissions),
   writeCapable: Schema.optional(Schema.Boolean),
+  purpose: Schema.optional(AgentRunPurpose),
+  repairAttemptId: Schema.optional(VerificationRepairAttemptId),
   createdAt: IsoDateTime,
 } as const;
 
@@ -1031,6 +1061,63 @@ export const MissionWorktreeRemoveCommand = Schema.Struct({
   requestedAt: IsoDateTime,
 });
 
+export const VerificationRequestCommand = Schema.Struct({
+  type: Schema.Literal("verification.request"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  taskId: Schema.NullOr(MissionTaskId),
+  worktreeId: Schema.NullOr(ManagedWorktreeId),
+  profileId: Schema.NullOr(VerificationProfileId),
+  requestedBy: TrimmedNonEmptyString,
+  trigger: VerificationRunTrigger,
+  scope: Schema.optionalKey(VerificationRequestScope),
+  requestedAt: IsoDateTime,
+});
+
+export const VerificationSettingsUpdateCommand = Schema.Struct({
+  type: Schema.Literal("verification.settings.update"),
+  commandId: CommandId,
+  settings: VerificationProjectSettings,
+  actor: TrimmedNonEmptyString,
+  updatedAt: IsoDateTime,
+});
+
+export const VerificationCancelCommand = Schema.Struct({
+  type: Schema.Literal("verification.cancel"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  verificationRunId: VerificationRunId,
+  requestedBy: TrimmedNonEmptyString,
+  requestedAt: IsoDateTime,
+});
+
+export const VerificationRepairRequestCommand = Schema.Struct({
+  type: Schema.Literal("verification.repair.request"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  missionId: MissionId,
+  taskId: MissionTaskId,
+  verificationRunId: VerificationRunId,
+  requestedBy: TrimmedNonEmptyString,
+  requestedAt: IsoDateTime,
+});
+
+export const VerificationOverrideRequestCommand = Schema.Struct({
+  type: Schema.Literal("verification.override.request"),
+  commandId: CommandId,
+  overrideId: VerificationOverrideId,
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  taskId: MissionTaskId,
+  verificationRunId: Schema.NullOr(VerificationRunId),
+  sourceFingerprint: TrimmedNonEmptyString,
+  reason: TrimmedNonEmptyString,
+  requestedBy: TrimmedNonEmptyString,
+  requestedAt: IsoDateTime,
+});
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -1074,6 +1161,11 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   MissionIntegrationApproveCommand,
   MissionIntegrationAbortCommand,
   MissionWorktreeRemoveCommand,
+  VerificationSettingsUpdateCommand,
+  VerificationRequestCommand,
+  VerificationCancelCommand,
+  VerificationRepairRequestCommand,
+  VerificationOverrideRequestCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -1121,6 +1213,11 @@ export const ClientOrchestrationCommand = Schema.Union([
   MissionIntegrationApproveCommand,
   MissionIntegrationAbortCommand,
   MissionWorktreeRemoveCommand,
+  VerificationSettingsUpdateCommand,
+  VerificationRequestCommand,
+  VerificationCancelCommand,
+  VerificationRepairRequestCommand,
+  VerificationOverrideRequestCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -1211,6 +1308,7 @@ export const MissionAgentRunCompleteCommand = Schema.Struct({
   commandId: CommandId,
   missionId: MissionId,
   agentRunId: AgentRunId,
+  requiresVerification: Schema.optional(Schema.Boolean),
   completedAt: IsoDateTime,
 });
 
@@ -1336,6 +1434,217 @@ export const MissionIntegrationFailCommand = Schema.Struct({
   errorSummary: TrimmedNonEmptyString,
 });
 
+export const VerificationProfileRecordCommand = Schema.Struct({
+  type: Schema.Literal("verification.profile.record"),
+  commandId: CommandId,
+  profile: VerificationProfile,
+  operation: Schema.Literals(["created", "updated"]),
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationRunRecordAction = Schema.Literals([
+  "plan_created",
+  "queued",
+  "started",
+  "cancelled",
+  "interrupted",
+  "passed",
+  "passed_with_warnings",
+  "failed",
+  "invalidated",
+]);
+export type VerificationRunRecordAction = typeof VerificationRunRecordAction.Type;
+
+export const VerificationRequestRejectCommand = Schema.Struct({
+  type: Schema.Literal("verification.request.reject"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  taskId: Schema.NullOr(MissionTaskId),
+  failureCategory: VerificationFailureCategory,
+  summary: TrimmedNonEmptyString,
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationRunRecordCommand = Schema.Struct({
+  type: Schema.Literal("verification.run.record"),
+  commandId: CommandId,
+  run: VerificationRun,
+  action: VerificationRunRecordAction,
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationGateRecordAction = Schema.Literals([
+  "started",
+  "completed",
+  "failed",
+  "skipped",
+]);
+export type VerificationGateRecordAction = typeof VerificationGateRecordAction.Type;
+
+export const VerificationGateRecordCommand = Schema.Struct({
+  type: Schema.Literal("verification.gate.record"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  verificationRunId: VerificationRunId,
+  gateId: VerificationGateId,
+  name: TrimmedNonEmptyString,
+  action: VerificationGateRecordAction,
+  summary: Schema.NullOr(Schema.String),
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationCheckRecordAction = Schema.Literals([
+  "started",
+  "passed",
+  "warned",
+  "failed",
+  "timed_out",
+  "cancelled",
+  "interrupted",
+  "skipped",
+]);
+export type VerificationCheckRecordAction = typeof VerificationCheckRecordAction.Type;
+
+export const VerificationCheckRecordCommand = Schema.Struct({
+  type: Schema.Literal("verification.check.record"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  checkRun: VerificationCheckRun,
+  action: VerificationCheckRecordAction,
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationCheckOutputRecordCommand = Schema.Struct({
+  type: Schema.Literal("verification.check.output.record"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  verificationRunId: VerificationRunId,
+  checkRunId: VerificationCheckRunId,
+  logReference: TrimmedNonEmptyString,
+  stdoutBytes: NonNegativeInt,
+  stderrBytes: NonNegativeInt,
+  truncated: Schema.Boolean,
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationDiagnosticRecordCommand = Schema.Struct({
+  type: Schema.Literal("verification.diagnostic.record"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  verificationRunId: VerificationRunId,
+  diagnostic: VerificationDiagnostic,
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationArtifactRecordCommand = Schema.Struct({
+  type: Schema.Literal("verification.artifact.record"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  artifact: VerificationArtifact,
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationRepairRecordAction = Schema.Literals([
+  "started",
+  "completed",
+  "failed",
+  "limit_reached",
+]);
+export type VerificationRepairRecordAction = typeof VerificationRepairRecordAction.Type;
+
+export const VerificationRepairRecordCommand = Schema.Struct({
+  type: Schema.Literal("verification.repair.record"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  missionId: MissionId,
+  attempt: VerificationRepairAttempt,
+  action: VerificationRepairRecordAction,
+  summary: Schema.NullOr(Schema.String),
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationOverrideApplyCommand = Schema.Struct({
+  type: Schema.Literal("verification.override.apply"),
+  commandId: CommandId,
+  override: VerificationOverride,
+  occurredAt: IsoDateTime,
+});
+
+/**
+ * Reference-sized GitHub integration events. Remote bodies, diffs, logs, and
+ * credentials stay in their dedicated stores and never enter the append-only
+ * orchestration log.
+ */
+export const GitHubOrchestrationEventType = Schema.Literals([
+  "github.account_connected",
+  "github.account_disconnected",
+  "github.authentication_expired",
+  "github.permissions_changed",
+  "github.rate_limited",
+  "github.repository_connected",
+  "github.repository_disconnected",
+  "github.sync_started",
+  "github.sync_completed",
+  "github.sync_partially_failed",
+  "github.sync_failed",
+  "github.issue_linked",
+  "github.issue_unlinked",
+  "github.issue_mission_created",
+  "github.branch_push_requested",
+  "github.branch_push_started",
+  "github.branch_pushed",
+  "github.branch_push_rejected",
+  "github.branch_diverged",
+  "github.pull_request_creation_requested",
+  "github.pull_request_created",
+  "github.pull_request_updated",
+  "github.pull_request_ready_for_review",
+  "github.pull_request_closed",
+  "github.pull_request_merged",
+  "github.review_received",
+  "github.changes_requested",
+  "github.review_thread_linked",
+  "github.review_task_created",
+  "github.review_thread_resolved",
+  "github.check_queued",
+  "github.check_started",
+  "github.check_completed",
+  "github.check_failed",
+  "github.check_stale",
+]);
+export type GitHubOrchestrationEventType = typeof GitHubOrchestrationEventType.Type;
+
+export const GitHubEventReferencePayload = Schema.Struct({
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  taskId: Schema.NullOr(MissionTaskId),
+  accountId: Schema.NullOr(GitHubAccountId),
+  repositoryConnectionId: Schema.NullOr(RepositoryConnectionId),
+  issueRecordId: Schema.NullOr(GitHubIssueRecordId),
+  pullRequestRecordId: Schema.NullOr(PullRequestRecordId),
+  reviewThreadRecordId: Schema.NullOr(ReviewThreadRecordId),
+  reviewCommentRecordId: Schema.NullOr(ReviewCommentRecordId),
+  issueNumber: Schema.NullOr(PositiveInt),
+  pullRequestNumber: Schema.NullOr(PositiveInt),
+  headSha: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(255))),
+  summary: Schema.NullOr(Schema.String.check(Schema.isMaxLength(2_000))),
+  occurredAt: IsoDateTime,
+});
+export type GitHubEventReferencePayload = typeof GitHubEventReferencePayload.Type;
+
+export const GitHubEventRecordCommand = Schema.Struct({
+  type: Schema.Literal("github.event.record"),
+  commandId: CommandId,
+  eventType: GitHubOrchestrationEventType,
+  payload: GitHubEventReferencePayload,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -1361,6 +1670,17 @@ const InternalOrchestrationCommand = Schema.Union([
   MissionIntegrationCompleteCommand,
   MissionIntegrationConflictCommand,
   MissionIntegrationFailCommand,
+  VerificationProfileRecordCommand,
+  VerificationRequestRejectCommand,
+  VerificationRunRecordCommand,
+  VerificationGateRecordCommand,
+  VerificationCheckRecordCommand,
+  VerificationCheckOutputRecordCommand,
+  VerificationDiagnosticRecordCommand,
+  VerificationArtifactRecordCommand,
+  VerificationRepairRecordCommand,
+  VerificationOverrideApplyCommand,
+  GitHubEventRecordCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -1408,6 +1728,7 @@ export const OrchestrationEventType = Schema.Literals([
   "task.created",
   "task.updated",
   "task.started",
+  "task.implementation-completed",
   "task.completed",
   "task.cancelled",
   "task.failed",
@@ -1444,6 +1765,78 @@ export const OrchestrationEventType = Schema.Literals([
   "integration.conflicted",
   "integration.aborted",
   "integration.failed",
+  "verification.settings_updated",
+  "verification.profile_created",
+  "verification.profile_updated",
+  "verification.requested",
+  "verification.request_failed",
+  "verification.plan_created",
+  "verification.queued",
+  "verification.started",
+  "verification.cancel_requested",
+  "verification.cancelled",
+  "verification.interrupted",
+  "verification.passed",
+  "verification.passed_with_warnings",
+  "verification.failed",
+  "verification.invalidated",
+  "verification.gate_started",
+  "verification.gate_completed",
+  "verification.gate_failed",
+  "verification.gate_skipped",
+  "verification.check_started",
+  "verification.check_output",
+  "verification.check_passed",
+  "verification.check_warned",
+  "verification.check_failed",
+  "verification.check_timed_out",
+  "verification.check_cancelled",
+  "verification.check_interrupted",
+  "verification.check_skipped",
+  "verification.diagnostic_created",
+  "verification.artifact_created",
+  "verification.repair_requested",
+  "verification.repair_started",
+  "verification.repair_completed",
+  "verification.repair_failed",
+  "verification.repair_limit_reached",
+  "verification.override_requested",
+  "verification.override_applied",
+  "github.account_connected",
+  "github.account_disconnected",
+  "github.authentication_expired",
+  "github.permissions_changed",
+  "github.rate_limited",
+  "github.repository_connected",
+  "github.repository_disconnected",
+  "github.sync_started",
+  "github.sync_completed",
+  "github.sync_partially_failed",
+  "github.sync_failed",
+  "github.issue_linked",
+  "github.issue_unlinked",
+  "github.issue_mission_created",
+  "github.branch_push_requested",
+  "github.branch_push_started",
+  "github.branch_pushed",
+  "github.branch_push_rejected",
+  "github.branch_diverged",
+  "github.pull_request_creation_requested",
+  "github.pull_request_created",
+  "github.pull_request_updated",
+  "github.pull_request_ready_for_review",
+  "github.pull_request_closed",
+  "github.pull_request_merged",
+  "github.review_received",
+  "github.changes_requested",
+  "github.review_thread_linked",
+  "github.review_task_created",
+  "github.review_thread_resolved",
+  "github.check_queued",
+  "github.check_started",
+  "github.check_completed",
+  "github.check_failed",
+  "github.check_stale",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1699,7 +2092,7 @@ export const MissionCancelledPayload = Schema.Struct({
 
 export const MissionCompletedPayload = Schema.Struct({
   missionId: MissionId,
-  agentRunId: AgentRunId,
+  agentRunId: Schema.NullOr(AgentRunId),
   completedAt: IsoDateTime,
 });
 
@@ -1737,7 +2130,7 @@ export const MissionTaskUpdatedPayload = Schema.Struct({
 export const MissionTaskLifecyclePayload = Schema.Struct({
   missionId: MissionId,
   taskId: MissionTaskId,
-  agentRunId: AgentRunId,
+  agentRunId: Schema.NullOr(AgentRunId),
   occurredAt: IsoDateTime,
   errorSummary: Schema.optional(TrimmedNonEmptyString),
 });
@@ -1876,6 +2269,129 @@ export const MissionIntegrationLifecyclePayload = Schema.Struct({
   headCommit: Schema.optional(TrimmedNonEmptyString),
   conflictingFiles: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   errorSummary: Schema.optional(TrimmedNonEmptyString),
+});
+
+export const VerificationProfileLifecyclePayload = Schema.Struct({
+  profile: VerificationProfile,
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationSettingsUpdatedPayload = Schema.Struct({
+  settings: VerificationProjectSettings,
+  actor: TrimmedNonEmptyString,
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationRequestedPayload = Schema.Struct({
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  taskId: Schema.NullOr(MissionTaskId),
+  worktreeId: Schema.NullOr(ManagedWorktreeId),
+  profileId: Schema.NullOr(VerificationProfileId),
+  requestedBy: TrimmedNonEmptyString,
+  trigger: VerificationRunTrigger,
+  scope: Schema.NullOr(VerificationRequestScope),
+  requestedAt: IsoDateTime,
+});
+
+export const VerificationRequestFailedPayload = Schema.Struct({
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  taskId: Schema.NullOr(MissionTaskId),
+  failureCategory: VerificationFailureCategory,
+  summary: TrimmedNonEmptyString,
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationRunLifecyclePayload = Schema.Struct({
+  run: VerificationRun,
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationCancelRequestedPayload = Schema.Struct({
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  verificationRunId: VerificationRunId,
+  requestedBy: TrimmedNonEmptyString,
+  requestedAt: IsoDateTime,
+});
+
+export const VerificationGateLifecyclePayload = Schema.Struct({
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  verificationRunId: VerificationRunId,
+  gateId: VerificationGateId,
+  name: TrimmedNonEmptyString,
+  summary: Schema.NullOr(Schema.String),
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationCheckLifecyclePayload = Schema.Struct({
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  checkRun: VerificationCheckRun,
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationCheckOutputPayload = Schema.Struct({
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  verificationRunId: VerificationRunId,
+  checkRunId: VerificationCheckRunId,
+  logReference: TrimmedNonEmptyString,
+  stdoutBytes: NonNegativeInt,
+  stderrBytes: NonNegativeInt,
+  truncated: Schema.Boolean,
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationDiagnosticCreatedPayload = Schema.Struct({
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  verificationRunId: VerificationRunId,
+  diagnostic: VerificationDiagnostic,
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationArtifactCreatedPayload = Schema.Struct({
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  artifact: VerificationArtifact,
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationRepairRequestedPayload = Schema.Struct({
+  projectId: ProjectId,
+  missionId: MissionId,
+  taskId: MissionTaskId,
+  verificationRunId: VerificationRunId,
+  requestedBy: TrimmedNonEmptyString,
+  requestedAt: IsoDateTime,
+});
+
+export const VerificationRepairLifecyclePayload = Schema.Struct({
+  projectId: ProjectId,
+  missionId: MissionId,
+  attempt: VerificationRepairAttempt,
+  summary: Schema.NullOr(Schema.String),
+  occurredAt: IsoDateTime,
+});
+
+export const VerificationOverrideRequestedPayload = Schema.Struct({
+  overrideId: VerificationOverrideId,
+  projectId: ProjectId,
+  missionId: Schema.NullOr(MissionId),
+  taskId: MissionTaskId,
+  verificationRunId: Schema.NullOr(VerificationRunId),
+  sourceFingerprint: TrimmedNonEmptyString,
+  reason: TrimmedNonEmptyString,
+  requestedBy: TrimmedNonEmptyString,
+  requestedAt: IsoDateTime,
+});
+
+export const VerificationOverrideAppliedPayload = Schema.Struct({
+  override: VerificationOverride,
+  occurredAt: IsoDateTime,
 });
 
 export const OrchestrationEventMetadata = Schema.Struct({
@@ -2087,6 +2603,11 @@ export const OrchestrationEvent = Schema.Union([
   }),
   Schema.Struct({
     ...EventBaseFields,
+    type: Schema.Literal("task.implementation-completed"),
+    payload: MissionTaskLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
     type: Schema.Literal("task.completed"),
     payload: MissionTaskLifecyclePayload,
   }),
@@ -2264,6 +2785,196 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("integration.failed"),
     payload: MissionIntegrationLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.settings_updated"),
+    payload: VerificationSettingsUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.profile_created"),
+    payload: VerificationProfileLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.profile_updated"),
+    payload: VerificationProfileLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.requested"),
+    payload: VerificationRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.request_failed"),
+    payload: VerificationRequestFailedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.plan_created"),
+    payload: VerificationRunLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.queued"),
+    payload: VerificationRunLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.started"),
+    payload: VerificationRunLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.cancel_requested"),
+    payload: VerificationCancelRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.cancelled"),
+    payload: VerificationRunLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.interrupted"),
+    payload: VerificationRunLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.passed"),
+    payload: VerificationRunLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.passed_with_warnings"),
+    payload: VerificationRunLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.failed"),
+    payload: VerificationRunLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.invalidated"),
+    payload: VerificationRunLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.gate_started"),
+    payload: VerificationGateLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.gate_completed"),
+    payload: VerificationGateLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.gate_failed"),
+    payload: VerificationGateLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.gate_skipped"),
+    payload: VerificationGateLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.check_started"),
+    payload: VerificationCheckLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.check_output"),
+    payload: VerificationCheckOutputPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.check_passed"),
+    payload: VerificationCheckLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.check_warned"),
+    payload: VerificationCheckLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.check_failed"),
+    payload: VerificationCheckLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.check_timed_out"),
+    payload: VerificationCheckLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.check_cancelled"),
+    payload: VerificationCheckLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.check_interrupted"),
+    payload: VerificationCheckLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.check_skipped"),
+    payload: VerificationCheckLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.diagnostic_created"),
+    payload: VerificationDiagnosticCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.artifact_created"),
+    payload: VerificationArtifactCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.repair_requested"),
+    payload: VerificationRepairRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.repair_started"),
+    payload: VerificationRepairLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.repair_completed"),
+    payload: VerificationRepairLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.repair_failed"),
+    payload: VerificationRepairLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.repair_limit_reached"),
+    payload: VerificationRepairLifecyclePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.override_requested"),
+    payload: VerificationOverrideRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("verification.override_applied"),
+    payload: VerificationOverrideAppliedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: GitHubOrchestrationEventType,
+    payload: GitHubEventReferencePayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;

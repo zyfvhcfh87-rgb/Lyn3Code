@@ -18,6 +18,7 @@ import { toPersistenceSqlError, type ProjectionRepositoryError } from "../../per
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { ProjectionPendingApprovalRepository } from "../../persistence/Services/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
+import { ProjectionVerificationConfigurationRepository } from "../../persistence/Services/ProjectionVerificationConfiguration.ts";
 import { ProjectionStateRepository } from "../../persistence/Services/ProjectionState.ts";
 import { ProjectionThreadActivityRepository } from "../../persistence/Services/ProjectionThreadActivities.ts";
 import { type ProjectionThreadActivity } from "../../persistence/Services/ProjectionThreadActivities.ts";
@@ -41,6 +42,7 @@ import { ProjectionAgentRunRepository } from "../../persistence/Services/Project
 import { ProjectionMissionTeamRepository } from "../../persistence/Services/ProjectionMissionTeams.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
+import { ProjectionVerificationConfigurationRepositoryLive } from "../../persistence/Layers/ProjectionVerificationConfiguration.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
 import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
 import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
@@ -492,6 +494,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionTurnRepository = yield* ProjectionTurnRepository;
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
     const projectionMissionRepository = yield* ProjectionMissionRepository;
+    const projectionVerificationConfigurations =
+      yield* ProjectionVerificationConfigurationRepository;
     const projectionMissionTaskRepository = yield* ProjectionMissionTaskRepository;
     const projectionAgentRunRepository = yield* ProjectionAgentRunRepository;
     const projectionMissionTeamRepository = yield* ProjectionMissionTeamRepository;
@@ -553,6 +557,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           return;
         }
+
+        case "verification.settings_updated":
+          yield* projectionVerificationConfigurations.upsertProjectSettings(event.payload.settings);
+          return;
 
         default:
           return;
@@ -1785,6 +1793,7 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   makeOrchestrationProjectionPipeline(),
 ).pipe(
   Layer.provideMerge(ProjectionProjectRepositoryLive),
+  Layer.provideMerge(ProjectionVerificationConfigurationRepositoryLive),
   Layer.provideMerge(ProjectionThreadRepositoryLive),
   Layer.provideMerge(ProjectionThreadMessageRepositoryLive),
   Layer.provideMerge(ProjectionThreadProposedPlanRepositoryLive),

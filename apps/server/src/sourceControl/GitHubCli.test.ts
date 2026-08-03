@@ -31,6 +31,68 @@ afterEach(() => {
 });
 
 describe("GitHubCli.layer", () => {
+  it.effect("executes API requests through gh credential storage with the body on stdin", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("HTTP/2.0 201 Created\n\n{}")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.executeApi({
+        cwd: "/repo",
+        hostname: "github.example.test",
+        endpoint: "repos/acme/widgets/pulls",
+        method: "POST",
+        headers: {
+          Accept: "application/vnd.github+json",
+          "If-None-Match": '"etag"',
+        },
+        body: { title: "Draft", draft: true },
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.executeApi",
+        command: "gh",
+        args: [
+          "api",
+          "repos/acme/widgets/pulls",
+          "--include",
+          "--hostname",
+          "github.example.test",
+          "--method",
+          "POST",
+          "--header",
+          "Accept: application/vnd.github+json",
+          "--header",
+          'If-None-Match: "etag"',
+          "--input",
+          "-",
+        ],
+        cwd: "/repo",
+        stdin: '{"title":"Draft","draft":true}',
+        timeoutMs: 30_000,
+        maxOutputBytes: 10_000_000,
+        allowNonZeroExit: true,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("rejects credential-bearing API headers before spawning gh", () =>
+    Effect.gen(function* () {
+      const secret = "secret-token-sentinel";
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh
+        .executeApi({
+          cwd: "/repo",
+          endpoint: "user",
+          headers: { Authorization: `Bearer ${secret}` },
+        })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(error, GitHubCli.GitHubCliRequestEncodeError);
+      assert.notInclude(error.message, secret);
+      expect(mockRun).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(layer)),
+  );
+
   it("does not classify a missing cwd as an unavailable gh executable", () => {
     const context = { command: "gh", cwd: "/repo" } as const;
     const missingCwd = new VcsProcessSpawnError({

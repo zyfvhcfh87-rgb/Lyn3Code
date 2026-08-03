@@ -46,6 +46,7 @@ import {
 import { useProjects, useServerConfigs } from "../state/entities";
 import { useEnvironment, useEnvironments } from "../state/environments";
 import { missionEnvironment, useMissionDetailState } from "../state/missions";
+import { verificationEnvironment } from "../state/verification";
 import { useAtomCommand } from "../state/use-atom-command";
 import { DEFAULT_RUNTIME_MODE } from "../types";
 
@@ -119,6 +120,9 @@ function MissionDetailRoute() {
     reportFailure: false,
   });
   const removeWorktree = useAtomCommand(missionEnvironment.removeWorktree, {
+    reportFailure: false,
+  });
+  const requestVerification = useAtomCommand(verificationEnvironment.request, {
     reportFailure: false,
   });
 
@@ -537,6 +541,37 @@ function MissionDetailRoute() {
     );
   };
 
+  const handleRequestVerification = async (taskId: MissionTaskId) => {
+    const task = snapshot?.tasks.find((candidate) => candidate.id === taskId);
+    if (!snapshot || !task?.worktreeId) {
+      toastManager.add({
+        type: "error",
+        title: "Verification needs an assigned worktree",
+        description: "Start the implementation task before requesting verification.",
+      });
+      return;
+    }
+    await runAction(
+      `verify:${taskId}`,
+      "Failed to request verification",
+      () =>
+        requestVerification({
+          environmentId,
+          input: {
+            projectId: snapshot.mission.projectId,
+            missionId,
+            taskId,
+            worktreeId: task.worktreeId,
+            profileId: null,
+            requestedBy: "user",
+            trigger: "manual",
+            requestedAt: new Date().toISOString(),
+          },
+        }),
+      "Verification queued",
+    );
+  };
+
   const handleApproveIntegration = async (taskId: MissionTaskId) => {
     const task = snapshot?.tasks.find((candidate) => candidate.id === taskId);
     if (!task?.worktreeId) return;
@@ -729,6 +764,7 @@ function MissionDetailRoute() {
         onApproveIntegration={handleApproveIntegration}
         onAbortIntegration={handleAbortIntegration}
         onRemoveWorktree={handleRemoveWorktree}
+        onRequestVerification={handleRequestVerification}
       />
     </SidebarInset>
   );

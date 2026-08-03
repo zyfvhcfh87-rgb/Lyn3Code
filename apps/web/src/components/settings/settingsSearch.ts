@@ -4,6 +4,7 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/providers"
   | "/settings/source-control"
+  | "/settings/verification"
   | "/settings/connections"
   | "/settings/beta"
   | "/settings/archived";
@@ -25,6 +26,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
   "/settings/source-control": "Source Control",
+  "/settings/verification": "Verification",
   "/settings/connections": "Connections",
   "/settings/beta": "Beta",
   "/settings/archived": "Archive",
@@ -140,6 +142,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "source-control",
     title: "Source control",
     to: "/settings/source-control",
+  },
+  {
+    id: "verification",
+    title: "Verification profiles",
+    to: "/settings/verification",
   },
   {
     id: "remote-environments",

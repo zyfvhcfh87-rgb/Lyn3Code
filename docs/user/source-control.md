@@ -2,6 +2,9 @@
 
 Lyn Code connects to your Git hosting provider so you can create pull requests, review code, and manage repositories without leaving the app.
 
+For GitHub issues, mission links, managed branch pushes, review tasks, and separate local/remote
+verification evidence, see the dedicated [GitHub workspace guide](./github-workspace.md).
+
 ## Supported Providers
 
 Lyn Code works with the platforms your team already uses:

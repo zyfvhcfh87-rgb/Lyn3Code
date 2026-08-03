@@ -15,6 +15,7 @@ import { Route as MissionsRouteImport } from './routes/missions'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
+import { Route as SettingsVerificationRouteImport } from './routes/settings.verification'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
@@ -27,6 +28,7 @@ import { Route as SettingsAppearanceRouteImport } from './routes/settings.appear
 import { Route as MissionsEnvironmentIdRouteImport } from './routes/missions.$environmentId'
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as MissionsEnvironmentIdMissionIdRouteImport } from './routes/missions.$environmentId.$missionId'
+import { Route as GithubEnvironmentIdProjectIdRouteImport } from './routes/github.$environmentId.$projectId'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
@@ -58,6 +60,11 @@ const ChatIndexRoute = ChatIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => ChatRoute,
+} as any)
+const SettingsVerificationRoute = SettingsVerificationRouteImport.update({
+  id: '/verification',
+  path: '/verification',
+  getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsSourceControlRoute = SettingsSourceControlRouteImport.update({
   id: '/source-control',
@@ -120,6 +127,12 @@ const MissionsEnvironmentIdMissionIdRoute =
     path: '/$missionId',
     getParentRoute: () => MissionsEnvironmentIdRoute,
   } as any)
+const GithubEnvironmentIdProjectIdRoute =
+  GithubEnvironmentIdProjectIdRouteImport.update({
+    id: '/github/$environmentId/$projectId',
+    path: '/github/$environmentId/$projectId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
   path: '/draft/$draftId',
@@ -149,8 +162,10 @@ export interface FileRoutesByFullPath {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
+  '/settings/verification': typeof SettingsVerificationRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/github/$environmentId/$projectId': typeof GithubEnvironmentIdProjectIdRoute
   '/missions/$environmentId/$missionId': typeof MissionsEnvironmentIdMissionIdRoute
 }
 export interface FileRoutesByTo {
@@ -169,9 +184,11 @@ export interface FileRoutesByTo {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
+  '/settings/verification': typeof SettingsVerificationRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/github/$environmentId/$projectId': typeof GithubEnvironmentIdProjectIdRoute
   '/missions/$environmentId/$missionId': typeof MissionsEnvironmentIdMissionIdRoute
 }
 export interface FileRoutesById {
@@ -192,9 +209,11 @@ export interface FileRoutesById {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
+  '/settings/verification': typeof SettingsVerificationRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/github/$environmentId/$projectId': typeof GithubEnvironmentIdProjectIdRoute
   '/missions/$environmentId/$missionId': typeof MissionsEnvironmentIdMissionIdRoute
 }
 export interface FileRouteTypes {
@@ -216,8 +235,10 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/providers'
     | '/settings/source-control'
+    | '/settings/verification'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/github/$environmentId/$projectId'
     | '/missions/$environmentId/$missionId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -236,9 +257,11 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/providers'
     | '/settings/source-control'
+    | '/settings/verification'
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/github/$environmentId/$projectId'
     | '/missions/$environmentId/$missionId'
   id:
     | '__root__'
@@ -258,9 +281,11 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/providers'
     | '/settings/source-control'
+    | '/settings/verification'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
+    | '/github/$environmentId/$projectId'
     | '/missions/$environmentId/$missionId'
   fileRoutesById: FileRoutesById
 }
@@ -271,6 +296,7 @@ export interface RootRouteChildren {
   PairRoute: typeof PairRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   ConnectCallbackRoute: typeof ConnectCallbackRoute
+  GithubEnvironmentIdProjectIdRoute: typeof GithubEnvironmentIdProjectIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -316,6 +342,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof ChatIndexRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/settings/verification': {
+      id: '/settings/verification'
+      path: '/verification'
+      fullPath: '/settings/verification'
+      preLoaderRoute: typeof SettingsVerificationRouteImport
+      parentRoute: typeof SettingsRoute
     }
     '/settings/source-control': {
       id: '/settings/source-control'
@@ -401,6 +434,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MissionsEnvironmentIdMissionIdRouteImport
       parentRoute: typeof MissionsEnvironmentIdRoute
     }
+    '/github/$environmentId/$projectId': {
+      id: '/github/$environmentId/$projectId'
+      path: '/github/$environmentId/$projectId'
+      fullPath: '/github/$environmentId/$projectId'
+      preLoaderRoute: typeof GithubEnvironmentIdProjectIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
       path: '/draft/$draftId'
@@ -467,6 +507,7 @@ interface SettingsRouteChildren {
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
   SettingsSourceControlRoute: typeof SettingsSourceControlRoute
+  SettingsVerificationRoute: typeof SettingsVerificationRoute
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
@@ -479,6 +520,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
   SettingsSourceControlRoute: SettingsSourceControlRoute,
+  SettingsVerificationRoute: SettingsVerificationRoute,
 }
 
 const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
@@ -492,6 +534,7 @@ const rootRouteChildren: RootRouteChildren = {
   PairRoute: PairRoute,
   SettingsRoute: SettingsRouteWithChildren,
   ConnectCallbackRoute: ConnectCallbackRoute,
+  GithubEnvironmentIdProjectIdRoute: GithubEnvironmentIdProjectIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

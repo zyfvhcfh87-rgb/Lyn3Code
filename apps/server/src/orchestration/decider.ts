@@ -5,6 +5,7 @@ import {
   canTransitionManagedWorktree,
   hasWritePermission,
   isActiveAgentRunStatus,
+  isAuthorizingVerificationRun,
   normalizeAgentPermissions,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -1463,7 +1464,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       const startableStatuses =
         command.type === "mission.retry"
           ? new Set(["blocked", "failed"])
-          : new Set(["backlog", "planning", "ready", "running"]);
+          : new Set(["backlog", "planning", "ready", "running", "verification"]);
       if (!startableStatuses.has(mission.status)) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
@@ -1515,8 +1516,30 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
               missionId: command.missionId,
               taskId: selectedTaskId,
             });
+      const runPurpose = command.purpose ?? "implementation";
+      const isVerificationRepair = runPurpose === "verification_repair";
+      if (isVerificationRepair !== (command.repairAttemptId !== undefined)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Verification repair runs require exactly one repair-attempt id.",
+        });
+      }
       if (task !== undefined) {
-        yield* requireMissionTaskTransition({ command, task, status: "running" });
+        if (isVerificationRepair) {
+          if (task.status !== "verification") {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: `Verification repair for task '${task.id}' requires the task to be in verification.`,
+            });
+          }
+        } else {
+          yield* requireMissionTaskTransition({ command, task, status: "running" });
+        }
+      } else if (isVerificationRepair) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Verification repair runs require a task.",
+        });
       }
 
       const activeRuns = listActiveAgentRuns(readModel, mission.id);
@@ -1604,6 +1627,20 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Agent run cannot exceed mission agent '${missionAgent.id}' permissions.`,
         });
       }
+      if (
+        isVerificationRepair &&
+        permissions.some(
+          (permission) =>
+            permission === "manage_tasks" ||
+            permission === "manage_worktrees" ||
+            permission === "integrate_branches",
+        )
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Verification repair runs cannot manage tasks, worktrees, or branch integration.",
+        });
+      }
       const writeCapable = command.writeCapable ?? hasWritePermission(permissions);
       if (writeCapable !== hasWritePermission(permissions)) {
         return yield* new OrchestrationCommandInvariantError({
@@ -1629,12 +1666,29 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Managed worktree '${worktreeId}' is not available to this mission run.`,
         });
       }
+      if (
+        isVerificationRepair &&
+        (task === undefined ||
+          worktree === undefined ||
+          worktree.missionId !== mission.id ||
+          worktree.taskId !== task.id)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Verification repair runs must reuse the task's assigned managed worktree.",
+        });
+      }
       if (isPhaseTwoRun && writeCapable) {
+        const worktreeAvailableForWrite =
+          worktree?.status === "ready" ||
+          worktree?.status === "active" ||
+          (isVerificationRepair &&
+            (worktree?.status === "dirty" || worktree?.status === "integration_ready"));
         if (
           task === undefined ||
           worktree?.missionId !== mission.id ||
           worktree.taskId !== task.id ||
-          (worktree.status !== "ready" && worktree.status !== "active")
+          !worktreeAvailableForWrite
         ) {
           return yield* new OrchestrationCommandInvariantError({
             commandType: command.type,
@@ -1653,7 +1707,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         }
       }
       const attemptNumber = command.attemptNumber ?? (task?.attemptCount ?? 0) + 1;
-      if (task !== undefined && attemptNumber > task.maximumAttempts) {
+      if (!isVerificationRepair && task !== undefined && attemptNumber > task.maximumAttempts) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `Task '${task.id}' exhausted its ${task.maximumAttempts} attempts.`,
@@ -1679,6 +1733,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         attemptNumber,
         permissions,
         writeCapable,
+        purpose: runPurpose,
+        repairAttemptId: command.repairAttemptId ?? null,
       };
       const events: PlannedOrchestrationEvent[] = [
         {
@@ -1715,21 +1771,23 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             },
           });
         }
-        events.push({
-          ...(yield* withEventBase({
-            aggregateKind: "mission",
-            aggregateId: command.missionId,
-            occurredAt: command.createdAt,
-            commandId: command.commandId,
-          })),
-          type: "task.started",
-          payload: {
-            missionId: command.missionId,
-            taskId: task.id,
-            agentRunId: command.agentRunId,
-            occurredAt: command.createdAt,
-          },
-        });
+        if (!isVerificationRepair) {
+          events.push({
+            ...(yield* withEventBase({
+              aggregateKind: "mission",
+              aggregateId: command.missionId,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            })),
+            type: "task.started",
+            payload: {
+              missionId: command.missionId,
+              taskId: task.id,
+              agentRunId: command.agentRunId,
+              occurredAt: command.createdAt,
+            },
+          });
+        }
       }
       if (writeCapable && worktree !== undefined && worktree.status !== "active") {
         events.push({
@@ -2723,6 +2781,756 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       return events;
     }
 
+    case "verification.settings.update": {
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.settings.projectId,
+      });
+      if (command.settings.updatedAt !== command.updatedAt) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Verification settings updatedAt must match the audited command timestamp.",
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "project",
+          aggregateId: command.settings.projectId,
+          occurredAt: command.updatedAt,
+          commandId: command.commandId,
+        })),
+        type: "verification.settings_updated",
+        payload: {
+          settings: command.settings,
+          actor: command.actor,
+          occurredAt: command.updatedAt,
+        },
+      };
+    }
+
+    case "verification.request": {
+      if ((command.scope === undefined) !== (command.trigger !== "retry_failed_gate")) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail:
+            "Failed-gate retries require an explicit failed-gate scope, and scoped requests must use the retry_failed_gate trigger.",
+        });
+      }
+      const project = yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+      const mission =
+        command.missionId === null
+          ? undefined
+          : yield* requireMission({ readModel, command, missionId: command.missionId });
+      if (mission !== undefined && mission.projectId !== project.id) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Mission '${mission.id}' does not belong to project '${project.id}'.`,
+        });
+      }
+      if (command.taskId !== null) {
+        if (mission === undefined) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: "Task verification requires a mission.",
+          });
+        }
+        yield* requireMissionTask({
+          readModel,
+          command,
+          missionId: mission.id,
+          taskId: command.taskId,
+        });
+      }
+      if (command.worktreeId !== null) {
+        const worktree = findManagedWorktreeById(readModel, command.worktreeId);
+        if (
+          worktree === undefined ||
+          worktree.projectId !== project.id ||
+          worktree.missionId !== command.missionId ||
+          (command.taskId !== null && worktree.taskId !== command.taskId)
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Verification worktree '${command.worktreeId}' does not match its project, mission, and task.`,
+          });
+        }
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: mission === undefined ? "project" : "mission",
+          aggregateId: mission?.id ?? project.id,
+          occurredAt: command.requestedAt,
+          commandId: command.commandId,
+        })),
+        type: "verification.requested",
+        payload: {
+          projectId: project.id,
+          missionId: command.missionId,
+          taskId: command.taskId,
+          worktreeId: command.worktreeId,
+          profileId: command.profileId,
+          requestedBy: command.requestedBy,
+          trigger: command.trigger,
+          scope: command.scope ?? null,
+          requestedAt: command.requestedAt,
+        },
+      };
+    }
+
+    case "verification.cancel": {
+      yield* requireProject({ readModel, command, projectId: command.projectId });
+      if (command.missionId !== null) {
+        yield* requireMission({ readModel, command, missionId: command.missionId });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: command.missionId === null ? "project" : "mission",
+          aggregateId: command.missionId ?? command.projectId,
+          occurredAt: command.requestedAt,
+          commandId: command.commandId,
+        })),
+        type: "verification.cancel_requested",
+        payload: {
+          projectId: command.projectId,
+          missionId: command.missionId,
+          verificationRunId: command.verificationRunId,
+          requestedBy: command.requestedBy,
+          requestedAt: command.requestedAt,
+        },
+      };
+    }
+
+    case "verification.repair.request": {
+      const mission = yield* requireMission({
+        readModel,
+        command,
+        missionId: command.missionId,
+      });
+      if (mission.projectId !== command.projectId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Mission '${mission.id}' does not belong to project '${command.projectId}'.`,
+        });
+      }
+      const task = yield* requireMissionTask({
+        readModel,
+        command,
+        missionId: mission.id,
+        taskId: command.taskId,
+      });
+      if (task.status !== "verification") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Task '${task.id}' is not awaiting verification repair.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: mission.id,
+          occurredAt: command.requestedAt,
+          commandId: command.commandId,
+        })),
+        type: "verification.repair_requested",
+        payload: {
+          projectId: command.projectId,
+          missionId: mission.id,
+          taskId: task.id,
+          verificationRunId: command.verificationRunId,
+          requestedBy: command.requestedBy,
+          requestedAt: command.requestedAt,
+        },
+      };
+    }
+
+    case "verification.override.request": {
+      yield* requireProject({ readModel, command, projectId: command.projectId });
+      const mission =
+        command.missionId === null
+          ? undefined
+          : yield* requireMission({ readModel, command, missionId: command.missionId });
+      if (mission === undefined || mission.projectId !== command.projectId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Task verification overrides require a matching mission and project.",
+        });
+      }
+      const task = yield* requireMissionTask({
+        readModel,
+        command,
+        missionId: mission.id,
+        taskId: command.taskId,
+      });
+      if (task.status !== "verification" || task.integrationStatus === "integrated") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Task '${task.id}' cannot receive a verification override in its current state.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: mission.id,
+          occurredAt: command.requestedAt,
+          commandId: command.commandId,
+        })),
+        type: "verification.override_requested",
+        payload: {
+          overrideId: command.overrideId,
+          projectId: command.projectId,
+          missionId: command.missionId,
+          taskId: command.taskId,
+          verificationRunId: command.verificationRunId,
+          sourceFingerprint: command.sourceFingerprint,
+          reason: command.reason,
+          requestedBy: command.requestedBy,
+          requestedAt: command.requestedAt,
+        },
+      };
+    }
+
+    case "verification.profile.record": {
+      yield* requireProject({ readModel, command, projectId: command.profile.projectId });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "project",
+          aggregateId: command.profile.projectId,
+          occurredAt: command.occurredAt,
+          commandId: command.commandId,
+        })),
+        type:
+          command.operation === "created"
+            ? "verification.profile_created"
+            : "verification.profile_updated",
+        payload: { profile: command.profile, occurredAt: command.occurredAt },
+      };
+    }
+
+    case "verification.request.reject": {
+      yield* requireProject({ readModel, command, projectId: command.projectId });
+      if (command.missionId !== null) {
+        const mission = yield* requireMission({
+          readModel,
+          command,
+          missionId: command.missionId,
+        });
+        if (mission.projectId !== command.projectId) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Verification request failure has a mismatched mission '${command.missionId}'.`,
+          });
+        }
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: command.missionId === null ? "project" : "mission",
+          aggregateId: command.missionId ?? command.projectId,
+          occurredAt: command.occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "verification.request_failed",
+        payload: {
+          projectId: command.projectId,
+          missionId: command.missionId,
+          taskId: command.taskId,
+          failureCategory: command.failureCategory,
+          summary: command.summary,
+          occurredAt: command.occurredAt,
+        },
+      };
+    }
+
+    case "verification.run.record": {
+      const run = command.run;
+      yield* requireProject({ readModel, command, projectId: run.projectId });
+      if (
+        run.executionPlan.source.sourceFingerprint !== run.sourceFingerprint ||
+        run.executionPlan.profileId !== run.profileId ||
+        run.executionPlan.configurationRevision !== run.configurationRevision ||
+        run.executionPlan.configurationDigest !== run.configurationDigest
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Verification run '${run.id}' does not match its immutable execution plan.`,
+        });
+      }
+      const expectedStatus =
+        command.action === "plan_created" || command.action === "queued"
+          ? "queued"
+          : command.action === "started"
+            ? "running"
+            : command.action;
+      if (run.status !== expectedStatus) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Verification action '${command.action}' does not match run status '${run.status}'.`,
+        });
+      }
+      const mission =
+        run.missionId === null
+          ? undefined
+          : yield* requireMission({ readModel, command, missionId: run.missionId });
+      if (mission !== undefined && mission.projectId !== run.projectId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Verification run '${run.id}' has a mismatched mission.`,
+        });
+      }
+      const task =
+        run.taskId === null || mission === undefined
+          ? undefined
+          : yield* requireMissionTask({
+              readModel,
+              command,
+              missionId: mission.id,
+              taskId: run.taskId,
+            });
+      const eventType =
+        command.action === "plan_created"
+          ? "verification.plan_created"
+          : (`verification.${command.action}` as const);
+      const events: PlannedOrchestrationEvent[] = [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: mission === undefined ? "project" : "mission",
+            aggregateId: mission?.id ?? run.projectId,
+            occurredAt: command.occurredAt,
+            commandId: command.commandId,
+          })),
+          type: eventType,
+          payload: { run, occurredAt: command.occurredAt },
+        },
+      ];
+      if (
+        (command.action === "passed" || command.action === "passed_with_warnings") &&
+        task !== undefined &&
+        mission !== undefined &&
+        task.status === "verification" &&
+        run.authorizationScope === "full_profile"
+      ) {
+        const skipsRequiredCheck = run.executionPlan.skippedChecks.some((check) => check.required);
+        const hasEmptyRequiredGate = run.executionPlan.gates.some(
+          (gate) => gate.required && gate.checks.length === 0,
+        );
+        if (!isAuthorizingVerificationRun(run) || skipsRequiredCheck || hasEmptyRequiredGate) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Verification run '${run.id}' cannot authorize task '${task.id}'.`,
+          });
+        }
+        yield* requireMissionTaskTransition({ command, task, status: "completed" });
+        const allTasksComplete = (readModel.missionTasks ?? [])
+          .filter((entry) => entry.missionId === mission.id)
+          .every((entry) => entry.id === task.id || entry.status === "completed");
+        const nextMissionStatus = allTasksComplete ? "completed" : "running";
+        yield* requireMissionTransition({ command, mission, status: nextMissionStatus });
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "mission",
+            aggregateId: mission.id,
+            occurredAt: command.occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "task.completed",
+          payload: {
+            missionId: mission.id,
+            taskId: task.id,
+            agentRunId: run.agentRunId,
+            occurredAt: command.occurredAt,
+          },
+        });
+        if (run.worktreeId !== null) {
+          const worktree = findManagedWorktreeById(readModel, run.worktreeId);
+          if (
+            worktree?.missionId !== mission.id ||
+            worktree.taskId !== task.id ||
+            !canTransitionManagedWorktree(worktree.status, "integration_ready")
+          ) {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: `Verified worktree '${run.worktreeId}' is not integration ready.`,
+            });
+          }
+          events.push({
+            ...(yield* withEventBase({
+              aggregateKind: "mission",
+              aggregateId: mission.id,
+              occurredAt: command.occurredAt,
+              commandId: command.commandId,
+            })),
+            type: "managed_worktree.status-updated",
+            payload: {
+              missionId: mission.id,
+              worktreeId: worktree.id,
+              status: "integration_ready",
+              updatedAt: command.occurredAt,
+            },
+          });
+        }
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "mission",
+            aggregateId: mission.id,
+            occurredAt: command.occurredAt,
+            commandId: command.commandId,
+          })),
+          ...(allTasksComplete
+            ? {
+                type: "mission.completed" as const,
+                payload: {
+                  missionId: mission.id,
+                  agentRunId: run.agentRunId,
+                  completedAt: command.occurredAt,
+                },
+              }
+            : {
+                type: "mission.updated" as const,
+                payload: {
+                  missionId: mission.id,
+                  status: "running" as const,
+                  updatedAt: command.occurredAt,
+                },
+              }),
+        });
+      }
+      if (
+        command.action === "invalidated" &&
+        task !== undefined &&
+        mission !== undefined &&
+        task.status === "completed" &&
+        task.integrationStatus !== "integrated"
+      ) {
+        yield* requireMissionTaskTransition({ command, task, status: "verification" });
+        const nextMissionStatus = mission.status === "completed" ? "verification" : mission.status;
+        yield* requireMissionTransition({ command, mission, status: nextMissionStatus });
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "mission",
+            aggregateId: mission.id,
+            occurredAt: command.occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "task.updated",
+          payload: {
+            missionId: mission.id,
+            taskId: task.id,
+            status: "verification",
+            updatedAt: command.occurredAt,
+          },
+        });
+        if (nextMissionStatus !== mission.status) {
+          events.push({
+            ...(yield* withEventBase({
+              aggregateKind: "mission",
+              aggregateId: mission.id,
+              occurredAt: command.occurredAt,
+              commandId: command.commandId,
+            })),
+            type: "mission.updated",
+            payload: {
+              missionId: mission.id,
+              status: nextMissionStatus,
+              updatedAt: command.occurredAt,
+            },
+          });
+        }
+      }
+      return events;
+    }
+
+    case "verification.gate.record": {
+      yield* requireProject({ readModel, command, projectId: command.projectId });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: command.missionId === null ? "project" : "mission",
+          aggregateId: command.missionId ?? command.projectId,
+          occurredAt: command.occurredAt,
+          commandId: command.commandId,
+        })),
+        type: `verification.gate_${command.action}` as const,
+        payload: {
+          projectId: command.projectId,
+          missionId: command.missionId,
+          verificationRunId: command.verificationRunId,
+          gateId: command.gateId,
+          name: command.name,
+          summary: command.summary,
+          occurredAt: command.occurredAt,
+        },
+      };
+    }
+
+    case "verification.check.record": {
+      yield* requireProject({ readModel, command, projectId: command.projectId });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: command.missionId === null ? "project" : "mission",
+          aggregateId: command.missionId ?? command.projectId,
+          occurredAt: command.occurredAt,
+          commandId: command.commandId,
+        })),
+        type: `verification.check_${command.action}` as const,
+        payload: {
+          projectId: command.projectId,
+          missionId: command.missionId,
+          checkRun: command.checkRun,
+          occurredAt: command.occurredAt,
+        },
+      };
+    }
+
+    case "verification.check.output.record": {
+      yield* requireProject({ readModel, command, projectId: command.projectId });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: command.missionId === null ? "project" : "mission",
+          aggregateId: command.missionId ?? command.projectId,
+          occurredAt: command.occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "verification.check_output",
+        payload: {
+          projectId: command.projectId,
+          missionId: command.missionId,
+          verificationRunId: command.verificationRunId,
+          checkRunId: command.checkRunId,
+          logReference: command.logReference,
+          stdoutBytes: command.stdoutBytes,
+          stderrBytes: command.stderrBytes,
+          truncated: command.truncated,
+          occurredAt: command.occurredAt,
+        },
+      };
+    }
+
+    case "verification.diagnostic.record":
+    case "verification.artifact.record": {
+      yield* requireProject({ readModel, command, projectId: command.projectId });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: command.missionId === null ? "project" : "mission",
+          aggregateId: command.missionId ?? command.projectId,
+          occurredAt: command.occurredAt,
+          commandId: command.commandId,
+        })),
+        type:
+          command.type === "verification.diagnostic.record"
+            ? "verification.diagnostic_created"
+            : "verification.artifact_created",
+        payload:
+          command.type === "verification.diagnostic.record"
+            ? {
+                projectId: command.projectId,
+                missionId: command.missionId,
+                verificationRunId: command.verificationRunId,
+                diagnostic: command.diagnostic,
+                occurredAt: command.occurredAt,
+              }
+            : {
+                projectId: command.projectId,
+                missionId: command.missionId,
+                artifact: command.artifact,
+                occurredAt: command.occurredAt,
+              },
+      };
+    }
+
+    case "verification.repair.record": {
+      const mission = yield* requireMission({
+        readModel,
+        command,
+        missionId: command.missionId,
+      });
+      if (mission.projectId !== command.projectId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Repair attempt '${command.attempt.id}' has a mismatched project.`,
+        });
+      }
+      yield* requireMissionTask({
+        readModel,
+        command,
+        missionId: mission.id,
+        taskId: command.attempt.taskId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: mission.id,
+          occurredAt: command.occurredAt,
+          commandId: command.commandId,
+        })),
+        type: `verification.repair_${command.action}` as const,
+        payload: {
+          projectId: command.projectId,
+          missionId: mission.id,
+          attempt: command.attempt,
+          summary: command.summary,
+          occurredAt: command.occurredAt,
+        },
+      };
+    }
+
+    case "verification.override.apply": {
+      const override = command.override;
+      yield* requireProject({ readModel, command, projectId: override.projectId });
+      const mission =
+        override.missionId === null
+          ? undefined
+          : yield* requireMission({ readModel, command, missionId: override.missionId });
+      if (mission === undefined || mission.projectId !== override.projectId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Verification override '${override.id}' has a mismatched mission.`,
+        });
+      }
+      const task = yield* requireMissionTask({
+        readModel,
+        command,
+        missionId: mission.id,
+        taskId: override.taskId,
+      });
+      if (task.status !== "verification" || task.integrationStatus === "integrated") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Verification override '${override.id}' cannot authorize task '${task.id}'.`,
+        });
+      }
+      yield* requireMissionTaskTransition({ command, task, status: "completed" });
+      const allTasksComplete = (readModel.missionTasks ?? [])
+        .filter((entry) => entry.missionId === mission.id)
+        .every((entry) => entry.id === task.id || entry.status === "completed");
+      const nextMissionStatus = allTasksComplete ? "completed" : "running";
+      yield* requireMissionTransition({ command, mission, status: nextMissionStatus });
+      const events: PlannedOrchestrationEvent[] = [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "mission",
+            aggregateId: mission.id,
+            occurredAt: command.occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "verification.override_applied",
+          payload: { override, occurredAt: command.occurredAt },
+        },
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "mission",
+            aggregateId: mission.id,
+            occurredAt: command.occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "task.completed",
+          payload: {
+            missionId: mission.id,
+            taskId: task.id,
+            agentRunId: null,
+            occurredAt: command.occurredAt,
+          },
+        },
+      ];
+      if (task.worktreeId !== null) {
+        const worktree = findManagedWorktreeById(readModel, task.worktreeId);
+        if (
+          worktree !== undefined &&
+          canTransitionManagedWorktree(worktree.status, "integration_ready")
+        ) {
+          events.push({
+            ...(yield* withEventBase({
+              aggregateKind: "mission",
+              aggregateId: mission.id,
+              occurredAt: command.occurredAt,
+              commandId: command.commandId,
+            })),
+            type: "managed_worktree.status-updated",
+            payload: {
+              missionId: mission.id,
+              worktreeId: worktree.id,
+              status: "integration_ready",
+              updatedAt: command.occurredAt,
+            },
+          });
+        }
+      }
+      events.push({
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: mission.id,
+          occurredAt: command.occurredAt,
+          commandId: command.commandId,
+        })),
+        ...(allTasksComplete
+          ? {
+              type: "mission.completed" as const,
+              payload: {
+                missionId: mission.id,
+                agentRunId: null,
+                completedAt: command.occurredAt,
+              },
+            }
+          : {
+              type: "mission.updated" as const,
+              payload: {
+                missionId: mission.id,
+                status: "running" as const,
+                updatedAt: command.occurredAt,
+              },
+            }),
+      });
+      return events;
+    }
+
+    case "github.event.record": {
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.payload.projectId,
+      });
+      const mission =
+        command.payload.missionId === null
+          ? null
+          : yield* requireMission({
+              readModel,
+              command,
+              missionId: command.payload.missionId,
+            });
+      if (mission !== null && mission.projectId !== command.payload.projectId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `GitHub event '${command.eventType}' has a mismatched mission and project.`,
+        });
+      }
+      if (command.payload.taskId !== null) {
+        if (mission === null) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `GitHub event '${command.eventType}' cannot reference a task without a mission.`,
+          });
+        }
+        yield* requireMissionTask({
+          readModel,
+          command,
+          missionId: mission.id,
+          taskId: command.payload.taskId,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: mission === null ? "project" : "mission",
+          aggregateId: mission === null ? command.payload.projectId : mission.id,
+          occurredAt: command.payload.occurredAt,
+          commandId: command.commandId,
+        })),
+        type: command.eventType,
+        payload: command.payload,
+      };
+    }
+
     case "mission.agent-run.mark-running": {
       const run = yield* requireAgentRun({
         readModel,
@@ -2767,18 +3575,45 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
               missionId: command.missionId,
               taskId: run.taskId,
             });
-      if (task !== undefined) {
-        yield* requireMissionTaskTransition({ command, task, status: "completed" });
+      const isVerificationRepair = run.purpose === "verification_repair";
+      const requiresVerification = !isVerificationRepair && (command.requiresVerification ?? false);
+      if (task !== undefined && !isVerificationRepair) {
+        yield* requireMissionTaskTransition({
+          command,
+          task,
+          status: requiresVerification ? "verification" : "completed",
+        });
       }
-      const allTasksComplete = (readModel.missionTasks ?? [])
+      const allTasksSettledForThisRun = (readModel.missionTasks ?? [])
         .filter((entry) => entry.missionId === mission.id)
-        .every((entry) => entry.id === task?.id || entry.status === "completed");
+        .every(
+          (entry) =>
+            entry.id === task?.id ||
+            entry.status === "completed" ||
+            (requiresVerification && entry.status === "verification"),
+        );
       const otherActiveRuns = listActiveAgentRuns(readModel, mission.id).filter(
         (entry) => entry.id !== run.id,
       );
-      const completesMission =
-        task === undefined || (allTasksComplete && otherActiveRuns.length === 0);
-      const nextMissionStatus = completesMission ? "completed" : "running";
+      const completesMission = task === undefined;
+      const entersVerification =
+        requiresVerification &&
+        task !== undefined &&
+        allTasksSettledForThisRun &&
+        otherActiveRuns.length === 0;
+      const completesTaskMission =
+        !requiresVerification &&
+        !isVerificationRepair &&
+        task !== undefined &&
+        allTasksSettledForThisRun &&
+        otherActiveRuns.length === 0;
+      const nextMissionStatus = completesMission
+        ? "completed"
+        : completesTaskMission
+          ? "completed"
+          : entersVerification
+            ? "verification"
+            : "running";
       yield* requireMissionTransition({ command, mission, status: nextMissionStatus });
       const events: PlannedOrchestrationEvent[] = [
         {
@@ -2797,7 +3632,24 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           },
         },
       ];
-      if (task !== undefined) {
+      if (task !== undefined && requiresVerification) {
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "mission",
+            aggregateId: mission.id,
+            occurredAt: command.completedAt,
+            commandId: command.commandId,
+          })),
+          type: "task.implementation-completed",
+          payload: {
+            missionId: mission.id,
+            taskId: task.id,
+            agentRunId: run.id,
+            occurredAt: command.completedAt,
+          },
+        });
+      }
+      if (task !== undefined && !isVerificationRepair && !requiresVerification) {
         events.push({
           ...(yield* withEventBase({
             aggregateKind: "mission",
@@ -2813,7 +3665,18 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             occurredAt: command.completedAt,
           },
         });
-        if (run.writeCapable && run.worktreeId !== null) {
+        if (run.worktreeId !== null) {
+          const worktree = findManagedWorktreeById(readModel, run.worktreeId);
+          if (
+            worktree?.missionId !== mission.id ||
+            worktree.taskId !== task.id ||
+            !canTransitionManagedWorktree(worktree.status, "integration_ready")
+          ) {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: `Completed worktree '${run.worktreeId}' is not integration ready.`,
+            });
+          }
           events.push({
             ...(yield* withEventBase({
               aggregateKind: "mission",
@@ -2824,7 +3687,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             type: "managed_worktree.status-updated",
             payload: {
               missionId: mission.id,
-              worktreeId: run.worktreeId,
+              worktreeId: worktree.id,
               status: "integration_ready",
               updatedAt: command.completedAt,
             },
@@ -2838,7 +3701,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           occurredAt: command.completedAt,
           commandId: command.commandId,
         })),
-        ...(completesMission
+        ...(completesMission || completesTaskMission
           ? {
               type: "mission.completed" as const,
               payload: {
@@ -2851,7 +3714,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
               type: "mission.updated" as const,
               payload: {
                 missionId: mission.id,
-                status: "running" as const,
+                status: nextMissionStatus,
                 updatedAt: command.completedAt,
               },
             }),
@@ -2868,16 +3731,27 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         agentRunId: command.agentRunId,
       });
       yield* requireAgentRunTransition({ command, run, status: "failed" });
-      const isLegacySingleAgentRun = run.missionAgentId === null;
+      const isVerificationRepair = run.purpose === "verification_repair";
+      const isLegacySingleAgentRun = run.missionAgentId === null && !isVerificationRepair;
       const preservesCancelledMission = mission.status === "cancelled";
+      const otherActiveRuns = listActiveAgentRuns(readModel, mission.id).filter(
+        (entry) => entry.id !== run.id,
+      );
+      const allTasksAwaitingVerification = (readModel.missionTasks ?? [])
+        .filter((entry) => entry.missionId === mission.id)
+        .every((entry) => entry.status === "completed" || entry.status === "verification");
+      const repairMissionStatus =
+        otherActiveRuns.length === 0 && allTasksAwaitingVerification ? "verification" : "running";
       yield* requireMissionTransition({
         command,
         mission,
         status: preservesCancelledMission
           ? "cancelled"
-          : isLegacySingleAgentRun
-            ? "failed"
-            : "running",
+          : isVerificationRepair
+            ? repairMissionStatus
+            : isLegacySingleAgentRun
+              ? "failed"
+              : "running",
       });
       const events: PlannedOrchestrationEvent[] = [
         {
@@ -2897,7 +3771,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           },
         },
       ];
-      if (run.taskId !== null) {
+      if (run.taskId !== null && !isVerificationRepair) {
         const task = yield* requireMissionTask({
           readModel,
           command,
@@ -2952,7 +3826,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
                 type: "mission.updated" as const,
                 payload: {
                   missionId: mission.id,
-                  status: "running" as const,
+                  status: isVerificationRepair ? repairMissionStatus : ("running" as const),
                   updatedAt: command.failedAt,
                 },
               }),
@@ -3035,16 +3909,27 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         agentRunId: command.agentRunId,
       });
       yield* requireAgentRunTransition({ command, run, status: "interrupted" });
-      const isLegacySingleAgentRun = run.missionAgentId === null;
+      const isVerificationRepair = run.purpose === "verification_repair";
+      const isLegacySingleAgentRun = run.missionAgentId === null && !isVerificationRepair;
       const preservesCancelledMission = mission.status === "cancelled";
+      const otherActiveRuns = listActiveAgentRuns(readModel, mission.id).filter(
+        (entry) => entry.id !== run.id,
+      );
+      const allTasksAwaitingVerification = (readModel.missionTasks ?? [])
+        .filter((entry) => entry.missionId === mission.id)
+        .every((entry) => entry.status === "completed" || entry.status === "verification");
+      const repairMissionStatus =
+        otherActiveRuns.length === 0 && allTasksAwaitingVerification ? "verification" : "running";
       yield* requireMissionTransition({
         command,
         mission,
         status: preservesCancelledMission
           ? "cancelled"
-          : isLegacySingleAgentRun
-            ? "blocked"
-            : "running",
+          : isVerificationRepair
+            ? repairMissionStatus
+            : isLegacySingleAgentRun
+              ? "blocked"
+              : "running",
       });
       const events: PlannedOrchestrationEvent[] = [
         {
@@ -3071,7 +3956,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           missionId: mission.id,
           taskId: run.taskId,
         });
-        if (task.status === "running") {
+        if (task.status === "running" && !isVerificationRepair) {
           const recoveredTaskStatus = preservesCancelledMission ? "cancelled" : "blocked";
           yield* requireMissionTaskTransition({
             command,
@@ -3125,7 +4010,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
                 type: "mission.updated" as const,
                 payload: {
                   missionId: mission.id,
-                  status: "running" as const,
+                  status: isVerificationRepair ? repairMissionStatus : ("running" as const),
                   updatedAt: command.interruptedAt,
                 },
               }),

@@ -20,6 +20,8 @@ export * from "./vcs.ts";
 export * from "./sourceControl.ts";
 export * from "./orchestration.ts";
 export * from "./mission.ts";
+export * from "./verification.ts";
+export * from "./github.ts";
 export * from "./t3ProjectFile.ts";
 export * from "./editor.ts";
 export * from "./project.ts";

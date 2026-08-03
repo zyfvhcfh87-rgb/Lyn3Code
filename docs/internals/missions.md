@@ -2,15 +2,17 @@
 
 > For maintainers. Using missions? See [the user guide](../user/missions.md).
 
-Phase 2 extends the Phase 1 mission aggregate inside the existing event-sourced orchestration
+Phases 2 and 3 extend the Phase 1 mission aggregate inside the existing event-sourced orchestration
 engine. Commands, the append-only event store, transactional projections, provider sessions, Effect
-RPC WebSocket transport, and the shared client runtime remain the source of truth. Git lifecycle and
-scheduling are reactors around that aggregate, not separate mission systems.
+RPC WebSocket transport, and the shared client runtime remain the source of truth. Git lifecycle,
+scheduling, and verification are reactors around that aggregate, not separate mission systems.
 
 ## Domain model
 
 ```text
 Project
+|-- Verification settings -> accepted repository configuration digest
+|-- Verification profiles -> ordered gates and executable checks
 `-- Mission
     |-- Team settings
     |-- Mission agents -> provider instance + model + role permissions
@@ -18,7 +20,8 @@ Project
     |   |-- Dependencies
     |   |-- Managed task worktree
     |   |-- Agent runs -> linked threads
-    |   `-- Structured handoffs
+    |   |-- Structured handoffs
+    |   `-- Verification runs -> checks, logs, diagnostics, artifacts, repair attempts
     |-- Managed integration worktree
     `-- Orchestration events
 ```
@@ -43,6 +46,12 @@ Migration 036 owns the Phase 1 mission, task, and run projections. Migration 037
 - `projection_managed_worktrees`;
 - `projection_agent_handoffs`;
 - mission team/scheduler settings and task/run Phase 2 columns.
+
+Migration 038 adds Phase 3 verification settings, accepted profile/gate/check snapshots, runs,
+individual check runs, diagnostics, artifacts, repair attempts, and explicit overrides. It also adds
+the verification task state and agent-run purpose needed to distinguish implementation from bounded
+verification repair. The migration upgrades Phase 2 databases in place and preserves historical
+rows; clean-database and 037-to-038 paths share the same result.
 
 The Phase 1 one-active-run-per-mission index is replaced. Partial indexes allow parallel runs while
 enforcing one active write run per worktree. Paths and active worktree ownership are unique, foreign
@@ -108,7 +117,7 @@ The prompt contains only the mission objective, selected task, role and effectiv
 assigned path, predecessor handoff summaries, safety limits, and completion requirements. It does
 not copy the entire originating conversation.
 
-Completed, failed, cancelled, and interrupted Phase 2 runs emit a structured `AgentHandoff`, then a
+Completed, failed, cancelled, and interrupted mission runs emit a structured `AgentHandoff`, then a
 reconciliation event. The current provider-neutral completion stream does not expose a trustworthy
 machine-readable model handoff, so the server records a conservative outcome summary and treats Git
 status as authoritative for changed paths. The schema leaves decisions, commands, artifacts, and
@@ -126,10 +135,41 @@ session produces `agent_run.cancelled`, `task.cancelled`, and `mission.cancelled
 produces failure events instead. Interruption uses its own terminal events and cannot be projected
 as completion.
 
-Mission failure is isolated to the affected Phase 2 task; independent siblings remain running or
+Mission failure is isolated to the affected task; independent siblings remain running or
 eligible. Legacy single-agent failures retain Phase 1 mission-failed behavior. A completed task
-worktree becomes integration-ready, but the mission completes only after all tasks are complete and
-no sibling run remains active.
+that does not require verification becomes integration-ready. When verification is required, agent
+completion records implementation completion and the task remains in the verification state until a
+current required profile passes or an explicit current-source override is applied. The mission
+completes only after all tasks are complete and no sibling run remains active.
+
+## Automated verification
+
+Phase 3 architecture, configuration, evidence, and security details live in
+[verification.md](./verification.md). The short lifecycle is:
+
+```text
+implementation handoff
+        |
+        v
+task verification state -> immutable plan -> checks in assigned worktree
+        |                                      |
+        |                                      +-> logs, diagnostics, artifacts
+        v
+current required pass or explicit override -> integration ready
+```
+
+`VerificationOrchestrationReactor` consumes the existing mission events. It handles automatic and
+manual requests, persists accepted configuration snapshots and immutable plans, delegates commands
+to the focused verification engine, records provider-neutral progress, launches bounded repair runs
+through the existing `MissionRunReactor`, cascades cancellation, revalidates source state, and marks
+lost active runs interrupted on restart. It never emits normal orchestration events for every log
+line; durable log resources are paged through a dedicated query path.
+
+`MissionWorktreeReactor` remains the integration authority. Immediately before a task merge, it
+captures the actual managed-worktree fingerprint and requires a passing or passing-with-warnings run
+of the configured pre-integration profile for that exact state. Stale passes are invalidated and do
+not authorize integration. Overrides remain separately visible, reasoned audit records and do not
+alter verification history.
 
 Mission-linked threads are retained as durable run history. `thread.delete` rejects them; archiving
 remains available and does not remove managed Git state.
@@ -146,18 +186,21 @@ cancellation atomically appends the mission request, cancellation requests for a
 queued-task cancellation, and terminal mission cancellation. This stops future scheduler selection
 immediately while provider shutdown finishes asynchronously. Worktrees and branches are untouched.
 
-At reactor startup, every still-active run receives one deterministic interruption command and a
-handoff. Phase 2 tasks become blocked for explicit retry while unrelated work is preserved; legacy
-single-agent missions keep the Phase 1 recovery-blocked transition. Worktree recovery independently
-compares persisted records with actual Git registration and status. Neither reactor resumes agents.
+At reactor startup, every still-active agent run receives one deterministic interruption command and
+a handoff. Tasks become blocked for explicit retry while unrelated work is preserved; legacy
+single-agent missions keep the Phase 1 recovery-blocked transition. Active verification runs become
+`interrupted` with their partial evidence retained and no fabricated result. Worktree recovery
+independently compares persisted records with actual Git registration and status. Neither reactor
+resumes write agents or repair agents.
 
 ## Client surfaces
 
-Mission commands and live reduction are shared through
+Mission and verification commands and live reduction are shared through
 [`packages/client-runtime`](../../packages/client-runtime). The web mission route is the Electron
 renderer for the desktop team editor, accessible dependency graph, active-agent timeline, structured
-handoffs, worktree safety cards, and dependency-ordered integration queue. Mobile and remote surfaces
-are outside Lyn Code's product and Phase 2 acceptance scope.
+handoffs, worktree safety cards, verification evidence/history, and dependency-ordered integration
+queue. Mobile and remote verification-specific presentation remains a later multi-surface follow-up;
+the provider-neutral server contracts continue to work over the existing remote WebSocket transport.
 
 ## Focused verification
 
@@ -168,8 +211,9 @@ Relevant proof lives in:
 - temporary-repository Git and worktree reactor tests under `apps/server/src/mission-git` and
   `apps/server/src/orchestration/Layers`;
 - pure scheduler and mission lifecycle integration tests under `apps/server/src/orchestration`;
+- configuration/planner/process/evidence tests under `apps/server/src/verification`;
 - shared runtime and mission component tests under `packages/client-runtime` and `apps/web`.
 
-Phase 2 deliberately excludes GitHub/PR automation, pushing branches, default-branch merging,
-semantic memory, model-routing intelligence, usage dashboards, and an advanced verification
-pipeline.
+Phase 3 deliberately excludes GitHub/PR check publishing, pushing branches, default-branch merging,
+deployment verification, production monitoring, semantic memory, model-routing intelligence, and
+usage dashboards.

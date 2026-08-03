@@ -399,6 +399,13 @@ function applyMissionEventToSnapshot(
         updatedAt: event.payload.occurredAt,
       }));
       break;
+    case "task.implementation-completed":
+      tasks = updateTask(tasks, event.payload.taskId, (task) => ({
+        ...task,
+        status: "verification",
+        updatedAt: event.payload.occurredAt,
+      }));
+      break;
     case "task.completed":
       tasks = updateTask(tasks, event.payload.taskId, (task) => ({
         ...task,

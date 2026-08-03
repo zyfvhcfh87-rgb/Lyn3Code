@@ -492,6 +492,14 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
   return {
     service: {
       execute,
+      executeApi: (input) =>
+        Effect.fail(
+          new GitHubCli.GitHubCliCommandError({
+            command: "gh",
+            cwd: input.cwd,
+            cause: new Error(`Unexpected GitHub API request: ${input.endpoint}`),
+          }),
+        ),
       listOpenPullRequests: (input) =>
         execute({
           cwd: input.cwd,

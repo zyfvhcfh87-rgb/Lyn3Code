@@ -4,6 +4,7 @@ import type {
   MissionTask,
   MissionTaskId,
   TaskDependency,
+  VerificationTaskSummary,
 } from "@t3tools/contracts";
 import { CheckIcon, GitMergeIcon, TriangleAlertIcon } from "lucide-react";
 
@@ -31,6 +32,7 @@ export function MissionIntegrationQueue({
   mission,
   tasks,
   dependencies,
+  verificationSummaries,
   worktrees,
   canMutate,
   isPending,
@@ -40,6 +42,7 @@ export function MissionIntegrationQueue({
   readonly mission: Mission;
   readonly tasks: ReadonlyArray<MissionTask>;
   readonly dependencies: ReadonlyArray<TaskDependency>;
+  readonly verificationSummaries: ReadonlyArray<VerificationTaskSummary>;
   readonly worktrees: ReadonlyArray<ManagedWorktree>;
   readonly canMutate: boolean;
   readonly isPending: (key: string) => boolean;
@@ -48,6 +51,9 @@ export function MissionIntegrationQueue({
 }) {
   const worktreeById = new Map(worktrees.map((worktree) => [worktree.id, worktree] as const));
   const taskById = new Map(tasks.map((task) => [task.id, task] as const));
+  const verificationByTask = new Map(
+    verificationSummaries.map((summary) => [summary.taskId, summary] as const),
+  );
   const dependencyOrder = missionDependencyLayers(
     tasks.map((task) => task.id),
     dependencies,
@@ -91,8 +97,13 @@ export function MissionIntegrationQueue({
             );
             const conflicted =
               task.integrationStatus === "conflicted" || worktree?.status === "conflicted";
+            const verification = verificationByTask.get(task.id);
+            const verificationAllowed = verification?.authorization.allowed ?? false;
             const canApprove =
-              task.integrationStatus === "ready" && dependenciesIntegrated && !conflicted;
+              task.integrationStatus === "ready" &&
+              dependenciesIntegrated &&
+              !conflicted &&
+              verificationAllowed;
             return (
               <li key={task.id}>
                 <Card className="[content-visibility:auto] [contain-intrinsic-size:auto_10rem]">
@@ -136,6 +147,10 @@ export function MissionIntegrationQueue({
                           ? "Required"
                           : "Policy controlled"}
                       </dd>
+                      <dt className="text-muted-foreground">Verification</dt>
+                      <dd className="text-right">
+                        {verification?.authorization.status ?? "missing"}
+                      </dd>
                     </dl>
 
                     {!dependenciesIntegrated ? (
@@ -148,6 +163,13 @@ export function MissionIntegrationQueue({
                       <p className="flex items-center gap-2 text-xs text-destructive-foreground">
                         <TriangleAlertIcon className="size-4" /> Conflicts require recovery before
                         integration can continue.
+                      </p>
+                    ) : null}
+                    {!verificationAllowed ? (
+                      <p className="flex items-center gap-2 text-xs text-warning-foreground">
+                        <TriangleAlertIcon className="size-4" />
+                        {verification?.authorization.blockingReason ??
+                          "Required verification evidence is missing."}
                       </p>
                     ) : null}
 
