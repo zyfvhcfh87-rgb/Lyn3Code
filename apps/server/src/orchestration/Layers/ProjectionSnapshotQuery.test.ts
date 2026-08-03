@@ -2,6 +2,7 @@ import {
   CheckpointRef,
   EventId,
   MessageId,
+  MissionId,
   ProjectId,
   ThreadId,
   TurnId,
@@ -9,8 +10,11 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -24,6 +28,127 @@ const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(value);
+
+const makeMissionReadGateLayer = (options: {
+  readonly targetRead: number;
+  readonly readObserved: Deferred.Deferred<void>;
+  readonly releaseRead: Deferred.Deferred<void>;
+}) =>
+  Layer.effect(
+    SqlClient.SqlClient,
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      let missionReadCount = 0;
+      return new Proxy(sql, {
+        apply(target, thisArg, args) {
+          const statement = Reflect.apply(target, thisArg, args);
+          const query = Array.isArray(args[0]) ? args[0].join("?") : "";
+          if (!query.includes("FROM projection_missions")) {
+            return statement;
+          }
+          missionReadCount += 1;
+          if (missionReadCount !== options.targetRead) {
+            return statement;
+          }
+          return statement.pipe(
+            Effect.tap(() => Deferred.succeed(options.readObserved, undefined)),
+            Effect.tap(() => Deferred.await(options.releaseRead)),
+          );
+        },
+      }) as SqlClient.SqlClient;
+    }),
+  ).pipe(Layer.provide(SqlitePersistenceMemory));
+
+const makeMissionSnapshotLayer = <E>(sqlLayer: Layer.Layer<SqlClient.SqlClient, E>) =>
+  OrchestrationProjectionSnapshotQueryLive.pipe(
+    Layer.provideMerge(RepositoryIdentityResolver.layer),
+    Layer.provideMerge(sqlLayer),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+const seedMissionSnapshotState = Effect.fnUntraced(function* (
+  sql: SqlClient.SqlClient,
+  missionId: string,
+) {
+  yield* sql`
+    INSERT INTO projection_projects (
+      project_id,
+      title,
+      workspace_root,
+      default_model_selection_json,
+      scripts_json,
+      created_at,
+      updated_at,
+      deleted_at
+    )
+    VALUES (
+      'project-mission-snapshot',
+      'Mission snapshot project',
+      '/tmp/mission-snapshot',
+      '{"provider":"codex","model":"gpt-5-codex"}',
+      '[]',
+      '2026-08-03T00:00:00.000Z',
+      '2026-08-03T00:00:00.000Z',
+      NULL
+    )
+  `;
+  yield* sql`
+    INSERT INTO projection_missions (
+      mission_id,
+      project_id,
+      title,
+      description,
+      status,
+      created_at,
+      updated_at,
+      started_at,
+      completed_at,
+      cancelled_at
+    )
+    VALUES (
+      ${missionId},
+      'project-mission-snapshot',
+      'Before',
+      'Before the concurrent projection update',
+      'backlog',
+      '2026-08-03T00:00:00.000Z',
+      '2026-08-03T00:00:00.000Z',
+      NULL,
+      NULL,
+      NULL
+    )
+  `;
+  for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+    yield* sql`
+      INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+      VALUES (${projector}, 1, '2026-08-03T00:00:00.000Z')
+    `;
+  }
+});
+
+const advanceMissionSnapshotState = Effect.fnUntraced(function* (
+  sql: SqlClient.SqlClient,
+  missionId: string,
+) {
+  yield* sql.withTransaction(
+    Effect.gen(function* () {
+      yield* sql`
+        UPDATE projection_missions
+        SET
+          title = 'After',
+          status = 'ready',
+          updated_at = '2026-08-03T00:00:01.000Z'
+        WHERE mission_id = ${missionId}
+      `;
+      yield* sql`
+        UPDATE projection_state
+        SET
+          last_applied_sequence = 2,
+          updated_at = '2026-08-03T00:00:01.000Z'
+      `;
+    }),
+  );
+});
 
 const projectionSnapshotLayer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(
@@ -362,6 +487,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            providerSessionId: "provider-session-1",
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
             lastError: null,
@@ -432,6 +558,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            providerSessionId: "provider-session-1",
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
             lastError: null,
@@ -1910,4 +2037,95 @@ it.effect(
       assert.equal(fullSnapshot.projects[2]?.repositoryIdentity?.rootPath, "/tmp/deleted-root");
     }).pipe(Effect.provide(layer));
   },
+);
+
+it.effect("reads mission board state and snapshot sequence from one transaction", () =>
+  Effect.gen(function* () {
+    const readObserved = yield* Deferred.make<void>();
+    const releaseRead = yield* Deferred.make<void>();
+    const writerAttempted = yield* Deferred.make<void>();
+    const layer = makeMissionSnapshotLayer(
+      makeMissionReadGateLayer({
+        // The board first lists missions, then rereads each mission while building summaries.
+        targetRead: 2,
+        readObserved,
+        releaseRead,
+      }),
+    );
+
+    yield* Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const missionId = "mission-board-atomic";
+      yield* seedMissionSnapshotState(sql, missionId);
+
+      const snapshotFiber = yield* snapshotQuery.getMissionBoardSnapshot!().pipe(Effect.forkChild);
+      yield* Deferred.await(readObserved);
+      const writerFiber = yield* Effect.gen(function* () {
+        yield* Deferred.succeed(writerAttempted, undefined);
+        yield* advanceMissionSnapshotState(sql, missionId);
+      }).pipe(Effect.forkChild);
+      yield* Deferred.await(writerAttempted);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(releaseRead, undefined);
+
+      const snapshot = yield* Fiber.join(snapshotFiber);
+      yield* Fiber.join(writerFiber);
+
+      assert.equal(snapshot.snapshotSequence, 1);
+      assert.equal(snapshot.missions[0]?.mission.title, "Before");
+      assert.equal(snapshot.missions[0]?.mission.status, "backlog");
+
+      const current = yield* snapshotQuery.getMissionBoardSnapshot!();
+      assert.equal(current.snapshotSequence, 2);
+      assert.equal(current.missions[0]?.mission.title, "After");
+      assert.equal(current.missions[0]?.mission.status, "ready");
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("reads mission detail state and snapshot sequence from one transaction", () =>
+  Effect.gen(function* () {
+    const readObserved = yield* Deferred.make<void>();
+    const releaseRead = yield* Deferred.make<void>();
+    const writerAttempted = yield* Deferred.make<void>();
+    const layer = makeMissionSnapshotLayer(
+      makeMissionReadGateLayer({
+        targetRead: 1,
+        readObserved,
+        releaseRead,
+      }),
+    );
+
+    yield* Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const missionId = MissionId.make("mission-detail-atomic");
+      yield* seedMissionSnapshotState(sql, missionId);
+
+      const snapshotFiber = yield* snapshotQuery.getMissionDetailSnapshot!(missionId).pipe(
+        Effect.forkChild,
+      );
+      yield* Deferred.await(readObserved);
+      const writerFiber = yield* Effect.gen(function* () {
+        yield* Deferred.succeed(writerAttempted, undefined);
+        yield* advanceMissionSnapshotState(sql, missionId);
+      }).pipe(Effect.forkChild);
+      yield* Deferred.await(writerAttempted);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(releaseRead, undefined);
+
+      const snapshot = Option.getOrThrow(yield* Fiber.join(snapshotFiber));
+      yield* Fiber.join(writerFiber);
+
+      assert.equal(snapshot.snapshotSequence, 1);
+      assert.equal(snapshot.mission.title, "Before");
+      assert.equal(snapshot.mission.status, "backlog");
+
+      const current = Option.getOrThrow(yield* snapshotQuery.getMissionDetailSnapshot!(missionId));
+      assert.equal(current.snapshotSequence, 2);
+      assert.equal(current.mission.title, "After");
+      assert.equal(current.mission.status, "ready");
+    }).pipe(Effect.provide(layer));
+  }),
 );

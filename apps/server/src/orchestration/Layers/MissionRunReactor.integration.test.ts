@@ -21,7 +21,6 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
-import { ProviderSessionNotFoundError } from "../../provider/Errors.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
@@ -55,7 +54,6 @@ interface MissionRunHarnessShape {
   ) => Effect.Effect<Extract<OrchestrationCommand, { type: Type }>>;
   readonly commands: () => ReadonlyArray<OrchestrationCommand>;
   readonly failNextDispatch: (type: CommandType) => void;
-  readonly failStopSession: () => void;
   readonly interruptedThreads: () => ReadonlyArray<ThreadId>;
   readonly stoppedThreads: () => ReadonlyArray<ThreadId>;
   readonly reset: () => void;
@@ -84,7 +82,6 @@ const MissionRunHarnessLive = Layer.effect(
     const acceptedCommands = new Map<string, number>();
     let nextSequence = 1;
     let failingDispatchType: CommandType | null = null;
-    let shouldFailStopSession = false;
 
     const awaitCommand = <Type extends CommandType>(
       type: Type,
@@ -125,12 +122,8 @@ const MissionRunHarnessLive = Layer.effect(
       });
 
     const stopSession: ProviderServiceShape["stopSession"] = ({ threadId }) =>
-      Effect.gen(function* () {
+      Effect.sync(() => {
         stoppedThreads.push(threadId);
-        if (shouldFailStopSession) {
-          shouldFailStopSession = false;
-          return yield* new ProviderSessionNotFoundError({ threadId });
-        }
       });
 
     return {
@@ -141,9 +134,6 @@ const MissionRunHarnessLive = Layer.effect(
       failNextDispatch: (type) => {
         failingDispatchType = type;
       },
-      failStopSession: () => {
-        shouldFailStopSession = true;
-      },
       interruptedThreads: () => interruptedThreads,
       stoppedThreads: () => stoppedThreads,
       reset: () => {
@@ -153,7 +143,6 @@ const MissionRunHarnessLive = Layer.effect(
         acceptedCommands.clear();
         nextSequence = 1;
         failingDispatchType = null;
-        shouldFailStopSession = false;
       },
       eventStream: Stream.fromQueue(eventQueue),
       runtimeEventStream: Stream.fromQueue(runtimeEventQueue),
@@ -330,6 +319,28 @@ const providerFailedEvent = () =>
     },
   }) satisfies Extract<OrchestrationEvent, { type: "thread.session-set" }>;
 
+const providerRunningEvent = () =>
+  ({
+    ...eventBase,
+    aggregateKind: "thread" as const,
+    aggregateId: threadId,
+    type: "thread.session-set",
+    payload: {
+      threadId,
+      session: {
+        threadId,
+        status: "running",
+        providerName: "codex",
+        providerInstanceId,
+        providerSessionId: "provider-session-mission-reactor",
+        runtimeMode: "full-access",
+        activeTurnId: TurnId.make("turn-mission-reactor"),
+        lastError: null,
+        updatedAt: now,
+      },
+    },
+  }) satisfies Extract<OrchestrationEvent, { type: "thread.session-set" }>;
+
 const providerReadyEvent = () =>
   ({
     ...eventBase,
@@ -341,6 +352,27 @@ const providerReadyEvent = () =>
       session: {
         threadId,
         status: "ready",
+        providerName: "codex",
+        providerInstanceId,
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: now,
+      },
+    },
+  }) satisfies Extract<OrchestrationEvent, { type: "thread.session-set" }>;
+
+const providerStoppedEvent = () =>
+  ({
+    ...eventBase,
+    aggregateKind: "thread" as const,
+    aggregateId: threadId,
+    type: "thread.session-set",
+    payload: {
+      threadId,
+      session: {
+        threadId,
+        status: "stopped",
         providerName: "codex",
         providerInstanceId,
         runtimeMode: "full-access",
@@ -387,6 +419,24 @@ it.layer(TestLayer)("MissionRunReactor integration", (it) => {
         assert.equal(failure.agentRunId, runId);
         assert.match(failure.errorSummary, /Mission run could not start/);
         assert.match(failure.errorSummary, /Injected dispatch failure/);
+      }),
+    ),
+  );
+
+  it.effect("binds the provider session when the run starts running", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const reactor = yield* MissionRunReactor;
+        const harness = yield* MissionRunHarness;
+        harness.reset();
+        yield* reactor.start();
+        yield* seedRun("starting");
+
+        yield* harness.publish(providerRunningEvent());
+        const running = yield* harness.awaitCommand("mission.agent-run.mark-running");
+
+        assert.equal(running.agentRunId, runId);
+        assert.equal(running.providerSessionId, "provider-session-mission-reactor");
       }),
     ),
   );
@@ -494,27 +544,53 @@ it.layer(TestLayer)("MissionRunReactor integration", (it) => {
     ),
   );
 
-  it.effect("fails cancellation when the provider session cannot be stopped", () =>
+  it.effect("queues cancellation behind provider startup and waits for the stopped state", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const reactor = yield* MissionRunReactor;
         const harness = yield* MissionRunHarness;
+        const runs = yield* ProjectionAgentRunRepository;
         harness.reset();
+        yield* seedRun("completed");
         yield* reactor.start();
-        yield* seedRun("cancelling");
-        harness.failStopSession();
+        const run = yield* seedRun("starting");
+
+        yield* harness.publish(runStartedEvent(run));
+        yield* harness.awaitCommand("thread.turn.start");
+        yield* runs.upsert({ ...run, status: "cancelling" });
 
         yield* harness.publish(cancellationRequestedEvent());
-        const failure = yield* harness.awaitCommand("mission.agent-run.fail");
+        const interrupt = yield* harness.awaitCommand("thread.turn.interrupt");
+        const stop = yield* harness.awaitCommand("thread.session.stop");
 
-        assert.equal(failure.agentRunId, runId);
-        assert.match(failure.errorSummary, /could not be stopped during cancellation/);
-        assert.deepStrictEqual(harness.interruptedThreads(), [threadId]);
-        assert.deepStrictEqual(harness.stoppedThreads(), [threadId]);
+        assert.equal(interrupt.threadId, threadId);
+        assert.equal(stop.threadId, threadId);
+        assert.deepStrictEqual(harness.interruptedThreads(), []);
+        assert.deepStrictEqual(harness.stoppedThreads(), []);
         assert.equal(
-          harness.commands().some((command) => command.type === "mission.agent-run.cancel"),
+          harness
+            .commands()
+            .some(
+              (command) =>
+                command.type === "mission.agent-run.cancel" ||
+                command.type === "mission.agent-run.fail" ||
+                command.type === "mission.agent-run.complete",
+            ),
           false,
         );
+
+        yield* harness.publishRuntime(providerTurnCompletedEvent("completed"));
+        yield* harness.publish(providerStoppedEvent());
+        const cancellation = yield* harness.awaitCommand("mission.agent-run.cancel");
+
+        assert.equal(cancellation.agentRunId, runId);
+        assert.equal(cancellation.cancelledAt, now);
+        assert.equal(
+          harness.commands().some((command) => command.type === "mission.agent-run.complete"),
+          false,
+        );
+        const commands = harness.commands();
+        assert.isBelow(commands.indexOf(interrupt), commands.indexOf(stop));
       }),
     ),
   );

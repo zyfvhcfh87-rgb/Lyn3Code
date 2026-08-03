@@ -754,6 +754,7 @@ export function makeCursorAdapter(
           const session: ProviderSession = {
             provider: PROVIDER,
             providerInstanceId: boundInstanceId,
+            providerSessionId: started.sessionId,
             status: "ready",
             runtimeMode: input.runtimeMode,
             cwd,

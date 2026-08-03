@@ -1352,6 +1352,7 @@ export function makeOpenCodeAdapter(
         const session: ProviderSession = {
           provider: PROVIDER,
           providerInstanceId: boundInstanceId,
+          providerSessionId: started.openCodeSession.id,
           status: "ready",
           runtimeMode: input.runtimeMode,
           cwd: directory,

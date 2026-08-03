@@ -275,6 +275,7 @@ function mapSessionRow(
     status: row.status,
     providerName: row.providerName,
     ...(row.providerInstanceId !== null ? { providerInstanceId: row.providerInstanceId } : {}),
+    ...(row.providerSessionId !== null ? { providerSessionId: row.providerSessionId } : {}),
     runtimeMode: row.runtimeMode,
     activeTurnId: row.activeTurnId,
     lastError: row.lastError,
@@ -1013,6 +1014,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           status,
           provider_name AS "providerName",
           provider_instance_id AS "providerInstanceId",
+          provider_session_id AS "providerSessionId",
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",
@@ -1319,6 +1321,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   providerName: row.providerName,
                   ...(row.providerInstanceId !== null
                     ? { providerInstanceId: row.providerInstanceId }
+                    : {}),
+                  ...(row.providerSessionId !== null
+                    ? { providerSessionId: row.providerSessionId }
                     : {}),
                   runtimeMode: row.runtimeMode,
                   activeTurnId: row.activeTurnId,
@@ -2339,66 +2344,91 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const getMissionBoardSnapshot: NonNullable<
     ProjectionSnapshotQueryShape["getMissionBoardSnapshot"]
   > = (projectId) =>
-    Effect.gen(function* () {
-      const missions =
-        projectId === undefined
-          ? yield* projectionMissionRepository.listAll()
-          : yield* projectionMissionRepository.listByProjectId({ projectId });
-      const summaries = yield* Effect.forEach(
-        missions,
-        (mission) => getMissionSummaryById(mission.id).pipe(Effect.map(Option.getOrThrow)),
-        { concurrency: 1 },
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const missions =
+            projectId === undefined
+              ? yield* projectionMissionRepository.listAll()
+              : yield* projectionMissionRepository.listByProjectId({ projectId });
+          const summaries = yield* Effect.forEach(
+            missions,
+            (mission) => getMissionSummaryById(mission.id).pipe(Effect.map(Option.getOrThrow)),
+            { concurrency: 1 },
+          );
+          const { snapshotSequence } = yield* getSnapshotSequence();
+          return {
+            snapshotSequence,
+            projectId: projectId ?? null,
+            missions: summaries,
+            updatedAt:
+              missions
+                .map((mission) => mission.updatedAt)
+                .toSorted((left, right) => right.localeCompare(left))[0] ??
+              "1970-01-01T00:00:00.000Z",
+          };
+        }),
+      )
+      .pipe(
+        Effect.mapError((error) =>
+          isPersistenceError(error)
+            ? error
+            : toPersistenceSqlError("ProjectionSnapshotQuery.getMissionBoardSnapshot:transaction")(
+                error,
+              ),
+        ),
       );
-      const { snapshotSequence } = yield* getSnapshotSequence();
-      return {
-        snapshotSequence,
-        projectId: projectId ?? null,
-        missions: summaries,
-        updatedAt:
-          missions
-            .map((mission) => mission.updatedAt)
-            .toSorted((left, right) => right.localeCompare(left))[0] ?? "1970-01-01T00:00:00.000Z",
-      };
-    });
 
   const getMissionDetailSnapshot: NonNullable<
     ProjectionSnapshotQueryShape["getMissionDetailSnapshot"]
   > = (missionId) =>
-    Effect.gen(function* () {
-      const mission = yield* projectionMissionRepository.getById({ missionId });
-      if (Option.isNone(mission)) {
-        return Option.none<OrchestrationMissionDetailSnapshot>();
-      }
-      const missionEvents =
-        orchestrationEventStore.readForAggregate?.(
-          "mission",
-          missionId,
-          0,
-          Number.MAX_SAFE_INTEGER,
-        ) ??
-        orchestrationEventStore
-          .readAll()
-          .pipe(
-            Stream.filter(
-              (event) => event.aggregateKind === "mission" && event.aggregateId === missionId,
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const mission = yield* projectionMissionRepository.getById({ missionId });
+          if (Option.isNone(mission)) {
+            return Option.none<OrchestrationMissionDetailSnapshot>();
+          }
+          const missionEvents =
+            orchestrationEventStore.readForAggregate?.(
+              "mission",
+              missionId,
+              0,
+              Number.MAX_SAFE_INTEGER,
+            ) ??
+            orchestrationEventStore
+              .readAll()
+              .pipe(
+                Stream.filter(
+                  (event) => event.aggregateKind === "mission" && event.aggregateId === missionId,
+                ),
+              );
+          const [tasks, agentRuns, events, sequence] = yield* Effect.all([
+            projectionMissionTaskRepository.listByMissionId({ missionId }),
+            projectionAgentRunRepository.listByMissionId({ missionId }),
+            Stream.runCollect(missionEvents).pipe(
+              Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
             ),
-          );
-      const [tasks, agentRuns, events, sequence] = yield* Effect.all([
-        projectionMissionTaskRepository.listByMissionId({ missionId }),
-        projectionAgentRunRepository.listByMissionId({ missionId }),
-        Stream.runCollect(missionEvents).pipe(
-          Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+            getSnapshotSequence(),
+          ]);
+          return Option.some({
+            snapshotSequence: sequence.snapshotSequence,
+            mission: mission.value,
+            tasks,
+            agentRuns,
+            events,
+          });
+        }),
+      )
+      .pipe(
+        Effect.mapError((error) =>
+          isPersistenceError(error)
+            ? error
+            : toPersistenceSqlError("ProjectionSnapshotQuery.getMissionDetailSnapshot:transaction")(
+                error,
+              ),
         ),
-        getSnapshotSequence(),
-      ]);
-      return Option.some({
-        snapshotSequence: sequence.snapshotSequence,
-        mission: mission.value,
-        tasks,
-        agentRuns,
-        events,
-      });
-    });
+      );
 
   return {
     getMissionBoardSnapshot,

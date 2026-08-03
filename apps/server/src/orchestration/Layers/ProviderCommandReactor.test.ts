@@ -215,6 +215,7 @@ describe("ProviderCommandReactor", () => {
           ? { model: inputModelSelection?.model ?? modelSelection.model }
           : {}),
         threadId,
+        providerSessionId: `provider-session-${sessionIndex}`,
         resumeCursor: resumeCursor ?? { opaque: `resume-${sessionIndex}` },
         createdAt: now,
         updatedAt: now,
@@ -543,6 +544,7 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.status).toBe("starting");
+    expect(thread?.session?.providerSessionId).toBe("provider-session-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
@@ -581,6 +583,62 @@ describe("ProviderCommandReactor", () => {
 
       yield* Deferred.succeed(releaseStart, undefined);
       yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+    }),
+  );
+
+  effectIt.effect("serializes interrupt and stop behind a blocked provider session start", () =>
+    Effect.gen(function* () {
+      const releaseStart = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          startSessionEffect: (session) => Deferred.await(releaseStart).pipe(Effect.as(session)),
+        }),
+      );
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-cancellation"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-before-cancellation"),
+          role: "user",
+          text: "start before cancellation",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+      yield* Effect.promise(() => waitFor(() => harness.startSession.mock.calls.length === 1));
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-during-startup"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.make("cmd-session-stop-during-startup"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+      });
+
+      expect(harness.interruptTurn).not.toHaveBeenCalled();
+      expect(harness.stopSession).not.toHaveBeenCalled();
+
+      yield* Deferred.succeed(releaseStart, undefined);
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.interruptTurn).toHaveBeenCalledTimes(1);
+      expect(harness.stopSession).toHaveBeenCalledTimes(1);
+      expect(harness.interruptTurn.mock.invocationCallOrder[0]).toBeLessThan(
+        harness.stopSession.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
+      );
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.session?.status).toBe("stopped");
     }),
   );
 

@@ -3620,6 +3620,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         threadId,
         provider: PROVIDER,
         providerInstanceId: boundInstanceId,
+        ...(sessionId ? { providerSessionId: sessionId } : {}),
         status: "ready",
         runtimeMode: input.runtimeMode,
         ...(input.cwd ? { cwd: input.cwd } : {}),

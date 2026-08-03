@@ -152,32 +152,17 @@ const make = Effect.gen(function* () {
     if (Option.isNone(run) || run.value.status !== "cancelling") {
       return;
     }
-    yield* providerService.interruptTurn({ threadId: run.value.threadId }).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("mission run interrupt request failed; stopping session", {
-          missionId: run.value.missionId,
-          agentRunId: run.value.id,
-          error,
-        }),
-      ),
-    );
-    const stopped = yield* providerService.stopSession({ threadId: run.value.threadId }).pipe(
-      Effect.as(true),
-      Effect.catch((error) =>
-        failRun(
-          run.value.id,
-          run.value.missionId,
-          `Provider session could not be stopped during cancellation: ${String(error)}`,
-        ).pipe(Effect.as(false)),
-      ),
-    );
-    if (!stopped) return;
     yield* dispatch({
-      type: "mission.agent-run.cancel",
-      commandId: commandId(run.value.id, "cancelled"),
-      missionId: run.value.missionId,
-      agentRunId: run.value.id,
-      cancelledAt: yield* nowIso,
+      type: "thread.turn.interrupt",
+      commandId: commandId(run.value.id, "cancel-interrupt"),
+      threadId: run.value.threadId,
+      createdAt: event.payload.requestedAt,
+    });
+    yield* dispatch({
+      type: "thread.session.stop",
+      commandId: commandId(run.value.id, "cancel-stop"),
+      threadId: run.value.threadId,
+      createdAt: event.payload.requestedAt,
     });
   });
 
@@ -194,6 +179,7 @@ const make = Effect.gen(function* () {
         commandId: commandId(current.id, "running"),
         missionId: current.missionId,
         agentRunId: current.id,
+        providerSessionId: event.payload.session.providerSessionId ?? null,
         startedAt: event.payload.session.updatedAt,
       });
       return;
@@ -216,8 +202,20 @@ const make = Effect.gen(function* () {
     }
     if (
       (status === "interrupted" || status === "stopped") &&
-      (current.status === "starting" || current.status === "running")
+      (current.status === "starting" ||
+        current.status === "running" ||
+        current.status === "cancelling")
     ) {
+      if (current.status === "cancelling") {
+        yield* dispatch({
+          type: "mission.agent-run.cancel",
+          commandId: commandId(current.id, "cancelled"),
+          missionId: current.missionId,
+          agentRunId: current.id,
+          cancelledAt: event.payload.session.updatedAt,
+        });
+        return;
+      }
       yield* dispatch({
         type: "mission.agent-run.interrupt",
         commandId: commandId(current.id, "interrupted"),

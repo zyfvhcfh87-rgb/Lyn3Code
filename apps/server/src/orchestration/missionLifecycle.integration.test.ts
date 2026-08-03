@@ -168,6 +168,7 @@ it.layer(NodeServices.layer)("mission lifecycle integration", (it) => {
         commandId: commandId("command-run-running"),
         missionId,
         agentRunId: firstRunId,
+        providerSessionId: "provider-session-run-1",
         startedAt: "2026-08-03T00:00:05.000Z",
       });
       harness = yield* dispatchCommand(harness, {
@@ -190,6 +191,7 @@ it.layer(NodeServices.layer)("mission lifecycle integration", (it) => {
       expect(harness.model.missions?.[0]?.status).toBe("completed");
       expect(harness.model.missionTasks?.[0]?.status).toBe("completed");
       expect(harness.model.agentRuns?.[0]?.status).toBe("completed");
+      expect(harness.model.agentRuns?.[0]?.providerSessionId).toBe("provider-session-run-1");
 
       const duplicate = yield* Effect.flip(
         decideOrchestrationCommand({
@@ -216,6 +218,7 @@ it.layer(NodeServices.layer)("mission lifecycle integration", (it) => {
         commandId: commandId("command-cancel-run-running"),
         missionId,
         agentRunId: firstRunId,
+        providerSessionId: "provider-session-cancel-1",
         startedAt: "2026-08-03T00:01:00.000Z",
       });
       harness = yield* dispatchCommand(harness, {

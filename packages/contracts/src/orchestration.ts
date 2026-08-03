@@ -289,6 +289,7 @@ export const OrchestrationSession = Schema.Struct({
   status: OrchestrationSessionStatus,
   providerName: Schema.NullOr(TrimmedNonEmptyString),
   providerInstanceId: Schema.optional(ProviderInstanceId),
+  providerSessionId: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
@@ -1023,6 +1024,7 @@ export const MissionAgentRunMarkRunningCommand = Schema.Struct({
   commandId: CommandId,
   missionId: MissionId,
   agentRunId: AgentRunId,
+  providerSessionId: Schema.NullOr(TrimmedNonEmptyString),
   startedAt: IsoDateTime,
 });
 
@@ -1424,6 +1426,7 @@ export const AgentRunLifecyclePayload = Schema.Struct({
   missionId: MissionId,
   taskId: Schema.NullOr(MissionTaskId),
   agentRunId: AgentRunId,
+  providerSessionId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   occurredAt: IsoDateTime,
   errorSummary: Schema.optional(TrimmedNonEmptyString),
 });

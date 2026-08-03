@@ -990,6 +990,9 @@ export function projectEvent(
             agentRuns: updateAgentRun(nextBase.agentRuns, payload.agentRunId, {
               status,
               updatedAt: payload.occurredAt,
+              ...(payload.providerSessionId !== undefined
+                ? { providerSessionId: payload.providerSessionId }
+                : {}),
               ...(status === "completed" ||
               status === "cancelled" ||
               status === "failed" ||

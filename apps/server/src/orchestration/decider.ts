@@ -1589,6 +1589,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           missionId: command.missionId,
           taskId: run.taskId,
           agentRunId: run.id,
+          providerSessionId: command.providerSessionId,
           occurredAt: command.startedAt,
         },
       };
