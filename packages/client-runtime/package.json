@@ -67,6 +67,10 @@
       "types": "./src/state/github.ts",
       "default": "./src/state/github.ts"
     },
+    "./state/memory": {
+      "types": "./src/state/memory.ts",
+      "default": "./src/state/memory.ts"
+    },
     "./state/models": {
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"
