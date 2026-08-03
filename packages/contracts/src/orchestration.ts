@@ -78,6 +78,11 @@ import {
   ReviewCommentRecordId,
   ReviewThreadRecordId,
 } from "./github.ts";
+import {
+  MemoryAggregateId,
+  MemoryEventReferencePayload,
+  MemoryOrchestrationEventType,
+} from "./memory.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -1645,6 +1650,13 @@ export const GitHubEventRecordCommand = Schema.Struct({
   payload: GitHubEventReferencePayload,
 });
 
+export const MemoryEventRecordCommand = Schema.Struct({
+  type: Schema.Literal("memory.event.record"),
+  commandId: CommandId,
+  eventType: MemoryOrchestrationEventType,
+  payload: MemoryEventReferencePayload,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -1681,6 +1693,7 @@ const InternalOrchestrationCommand = Schema.Union([
   VerificationRepairRecordCommand,
   VerificationOverrideApplyCommand,
   GitHubEventRecordCommand,
+  MemoryEventRecordCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -1837,10 +1850,47 @@ export const OrchestrationEventType = Schema.Literals([
   "github.check_completed",
   "github.check_failed",
   "github.check_stale",
+  "memory.entry_created",
+  "memory.entry_updated",
+  "memory.entry_activated",
+  "memory.entry_marked_stale",
+  "memory.entry_superseded",
+  "memory.entry_disputed",
+  "memory.entry_rejected",
+  "memory.entry_archived",
+  "memory.source_added",
+  "memory.source_changed",
+  "memory.source_missing",
+  "memory.proposal_created",
+  "memory.proposal_accepted",
+  "memory.proposal_edited_and_accepted",
+  "memory.proposal_rejected",
+  "memory.proposal_marked_duplicate",
+  "memory.contradiction_detected",
+  "memory.contradiction_resolved",
+  "memory.index_requested",
+  "memory.index_started",
+  "memory.index_source_completed",
+  "memory.index_source_failed",
+  "memory.index_completed",
+  "memory.index_interrupted",
+  "memory.embedding_started",
+  "memory.embedding_completed",
+  "memory.embedding_failed",
+  "memory.embedding_provider_changed",
+  "memory.retrieval_started",
+  "memory.retrieval_completed",
+  "memory.retrieval_failed",
+  "memory.feedback_received",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
-export const OrchestrationAggregateKind = Schema.Literals(["project", "thread", "mission"]);
+export const OrchestrationAggregateKind = Schema.Literals([
+  "project",
+  "thread",
+  "mission",
+  "memory",
+]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
 
@@ -2407,7 +2457,7 @@ const EventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId, MissionId]),
+  aggregateId: Schema.Union([ProjectId, ThreadId, MissionId, MemoryAggregateId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -2975,6 +3025,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: GitHubOrchestrationEventType,
     payload: GitHubEventReferencePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: MemoryOrchestrationEventType,
+    payload: MemoryEventReferencePayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;

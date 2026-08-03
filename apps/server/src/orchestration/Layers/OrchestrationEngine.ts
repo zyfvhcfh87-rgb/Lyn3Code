@@ -103,6 +103,8 @@ function commandToAggregateRef(command: OrchestrationCommand): {
       return command.payload.missionId === null
         ? { aggregateKind: "project", aggregateId: command.payload.projectId }
         : { aggregateKind: "mission", aggregateId: command.payload.missionId };
+    case "memory.event.record":
+      return { aggregateKind: "memory", aggregateId: command.payload.aggregateId };
     case "mission.create":
     case "mission.update":
     case "mission.task.create":

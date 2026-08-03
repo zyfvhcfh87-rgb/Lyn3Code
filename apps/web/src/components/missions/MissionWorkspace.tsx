@@ -292,6 +292,7 @@ export function MissionWorkspace({
 
             <MissionAgentActivity
               environmentId={environmentId}
+              projectId={mission.projectId}
               runs={agentRuns}
               agents={missionAgents}
               tasks={tasks}
