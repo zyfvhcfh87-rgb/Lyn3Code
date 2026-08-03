@@ -349,6 +349,44 @@ layer("persistent project memory repository", (it) => {
     }),
   );
 
+  it.effect("exports entries and imports them as reviewable proposals without overwriting", () =>
+    Effect.gen(function* () {
+      yield* seedProject;
+      const repository = yield* ProjectionMemoryRepository;
+      const sql = yield* SqlClientService.SqlClient;
+      const targetProjectId = ProjectId.make("memory-import-target");
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, default_model_selection_json, scripts_json,
+          created_at, updated_at, deleted_at
+        ) VALUES (${targetProjectId}, 'Imported memory', '/import-target', NULL, '[]', ${now}, ${now}, NULL)
+      `;
+      const created = yield* repository.createEntry(createInput);
+      const bundle = yield* repository.exportMemory(projectId);
+      assert.ok(bundle.entries.some((detail) => detail.entry.id === created.entry.id));
+
+      const imported = yield* repository.importMemory({
+        bundle,
+        targetProjectId,
+        conflictPolicy: "propose",
+        importedBy: "maintainer",
+      });
+      assert.strictEqual(imported.importedEntryIds.length, 0);
+      assert.strictEqual(imported.createdProposalIds.length, bundle.entries.length);
+      const proposals = yield* repository.listProposals({
+        projectId: targetProjectId,
+        statuses: ["pending"],
+        limit: 10,
+        offset: 0,
+      });
+      const importedProposal = proposals.find(
+        (proposal) => proposal.proposedTitle === created.entry.title,
+      );
+      assert.ok(importedProposal);
+      assert.strictEqual(importedProposal.sourceReferences[0]?.projectId, targetProjectId);
+    }),
+  );
+
   it.effect("reads only current provider-, model-, dimension-, and branch-safe embeddings", () =>
     Effect.gen(function* () {
       yield* seedProject;
