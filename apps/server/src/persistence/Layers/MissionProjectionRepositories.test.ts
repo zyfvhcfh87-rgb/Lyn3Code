@@ -72,6 +72,8 @@ const runPhase2Defaults = {
   attemptNumber: 1,
   permissions: ALL_AGENT_PERMISSIONS,
   writeCapable: true,
+  purpose: "implementation" as const,
+  repairAttemptId: null,
 };
 
 function seedProjectMissionAndTask({

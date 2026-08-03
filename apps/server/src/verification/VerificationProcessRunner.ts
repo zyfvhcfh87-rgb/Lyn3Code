@@ -161,6 +161,7 @@ export const buildVerificationProcessEnvironment = (input: {
 interface ActiveExecution {
   readonly handle: ChildProcessSpawner.ChildProcessHandle;
   cancelled: boolean;
+  timedOut: boolean;
 }
 
 export class VerificationProcessRunner extends Context.Service<
@@ -266,7 +267,7 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-    const execution: ActiveExecution = { handle, cancelled: false };
+    const execution: ActiveExecution = { handle, cancelled: false, timedOut: false };
     active.set(input.executionId, execution);
     yield* Effect.addFinalizer(() =>
       terminate(input.executionId, input.executable, execution).pipe(
@@ -319,15 +320,18 @@ export const make = Effect.gen(function* () {
         consume("stdout", handle.stdout),
         consume("stderr", handle.stderr),
         handle.exitCode.pipe(
-          Effect.mapError(
-            (cause) =>
-              new VerificationProcessError({
-                reason: "exit_failed",
-                executionId: input.executionId,
-                command: input.executable,
-                detail: "Unable to observe the verification process exit status.",
-                cause,
-              }),
+          Effect.catch((cause) =>
+            execution.cancelled || execution.timedOut
+              ? Effect.succeed(null)
+              : Effect.fail(
+                  new VerificationProcessError({
+                    reason: "exit_failed",
+                    executionId: input.executionId,
+                    command: input.executable,
+                    detail: "Unable to observe the verification process exit status.",
+                    cause,
+                  }),
+                ),
           ),
         ),
       ],
@@ -342,6 +346,7 @@ export const make = Effect.gen(function* () {
     let timedOut = false;
     if (outcome._tag === "TimedOut") {
       timedOut = true;
+      execution.timedOut = true;
       yield* terminate(input.executionId, input.executable, execution);
       const drained = yield* Fiber.join(waitFiber);
       exitCode = drained[2];
