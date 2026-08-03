@@ -38,6 +38,7 @@ import { ProjectionThreadRepository } from "../../persistence/Services/Projectio
 import { ProjectionMissionRepository } from "../../persistence/Services/ProjectionMissions.ts";
 import { ProjectionMissionTaskRepository } from "../../persistence/Services/ProjectionMissionTasks.ts";
 import { ProjectionAgentRunRepository } from "../../persistence/Services/ProjectionAgentRuns.ts";
+import { ProjectionMissionTeamRepository } from "../../persistence/Services/ProjectionMissionTeams.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
@@ -50,6 +51,7 @@ import { ProjectionThreadRepositoryLive } from "../../persistence/Layers/Project
 import { ProjectionMissionRepositoryLive } from "../../persistence/Layers/ProjectionMissions.ts";
 import { ProjectionMissionTaskRepositoryLive } from "../../persistence/Layers/ProjectionMissionTasks.ts";
 import { ProjectionAgentRunRepositoryLive } from "../../persistence/Layers/ProjectionAgentRuns.ts";
+import { ProjectionMissionTeamRepositoryLive } from "../../persistence/Layers/ProjectionMissionTeams.ts";
 import { ServerConfig } from "../../config.ts";
 import {
   OrchestrationProjectionPipeline,
@@ -492,6 +494,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionMissionRepository = yield* ProjectionMissionRepository;
     const projectionMissionTaskRepository = yield* ProjectionMissionTaskRepository;
     const projectionAgentRunRepository = yield* ProjectionAgentRunRepository;
+    const projectionMissionTeamRepository = yield* ProjectionMissionTeamRepository;
 
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -1566,11 +1569,17 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         return;
       }
       const missionId = MissionId.make(event.aggregateId);
-      const [mission, tasks, runs] = yield* Effect.all([
-        projectionMissionRepository.getById({ missionId }),
-        projectionMissionTaskRepository.listByMissionId({ missionId }),
-        projectionAgentRunRepository.listByMissionId({ missionId }),
-      ]);
+      const [mission, tasks, runs, roles, agents, dependencies, worktrees, handoffs] =
+        yield* Effect.all([
+          projectionMissionRepository.getById({ missionId }),
+          projectionMissionTaskRepository.listByMissionId({ missionId }),
+          projectionAgentRunRepository.listByMissionId({ missionId }),
+          projectionMissionTeamRepository.listAgentRoles(),
+          projectionMissionTeamRepository.listMissionAgentsByMissionId({ missionId }),
+          projectionMissionTeamRepository.listTaskDependenciesByMissionId({ missionId }),
+          projectionMissionTeamRepository.listManagedWorktreesByMissionId({ missionId }),
+          projectionMissionTeamRepository.listAgentHandoffsByMissionId({ missionId }),
+        ]);
       const next = yield* projectReadModelEvent(
         {
           snapshotSequence: Math.max(0, event.sequence - 1),
@@ -1579,6 +1588,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           missions: Option.isSome(mission) ? [mission.value] : [],
           missionTasks: tasks,
           agentRuns: runs,
+          agentRoles: roles,
+          missionAgents: agents,
+          taskDependencies: dependencies,
+          managedWorktrees: worktrees,
+          agentHandoffs: handoffs,
           updatedAt: event.occurredAt,
         },
         event,
@@ -1595,6 +1609,44 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         concurrency: 1,
         discard: true,
       });
+      if (event.type === "mission.agent-removed") {
+        yield* projectionMissionTeamRepository.deleteMissionAgent({
+          missionAgentId: event.payload.missionAgentId,
+        });
+      }
+      if (event.type === "task.dependency-removed") {
+        yield* projectionMissionTeamRepository.deleteTaskDependency({
+          dependencyId: event.payload.dependencyId,
+        });
+      }
+      yield* Effect.forEach(
+        next.agentRoles ?? [],
+        projectionMissionTeamRepository.upsertAgentRole,
+        {
+          concurrency: 1,
+          discard: true,
+        },
+      );
+      yield* Effect.forEach(
+        next.missionAgents ?? [],
+        projectionMissionTeamRepository.upsertMissionAgent,
+        { concurrency: 1, discard: true },
+      );
+      yield* Effect.forEach(
+        next.taskDependencies ?? [],
+        projectionMissionTeamRepository.addTaskDependency,
+        { concurrency: 1, discard: true },
+      );
+      yield* Effect.forEach(
+        next.managedWorktrees ?? [],
+        projectionMissionTeamRepository.upsertManagedWorktree,
+        { concurrency: 1, discard: true },
+      );
+      yield* Effect.forEach(
+        next.agentHandoffs ?? [],
+        projectionMissionTeamRepository.upsertAgentHandoff,
+        { concurrency: 1, discard: true },
+      );
     });
 
     const projectors: ReadonlyArray<ProjectorDefinition> = [
@@ -1744,4 +1796,5 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionMissionRepositoryLive),
   Layer.provideMerge(ProjectionMissionTaskRepositoryLive),
   Layer.provideMerge(ProjectionAgentRunRepositoryLive),
+  Layer.provideMerge(ProjectionMissionTeamRepositoryLive),
 );

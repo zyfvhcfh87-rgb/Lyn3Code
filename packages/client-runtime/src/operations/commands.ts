@@ -55,6 +55,21 @@ export type UpdateMissionTaskInput = CommandInput<"mission.task.update">;
 export type StartMissionInput = CommandInput<"mission.start">;
 export type RetryMissionInput = CommandInput<"mission.retry">;
 export type CancelMissionInput = CommandInput<"mission.cancel">;
+export type ConfigureMissionTeamInput = CommandInput<"mission.team.configure">;
+export type UpsertMissionAgentInput = CommandInput<"mission.agent.upsert">;
+export type RemoveMissionAgentInput = CommandInput<"mission.agent.remove">;
+export type UpdateMissionAgentPermissionsInput = CommandInput<"mission.agent.permissions.update">;
+export type AddMissionTaskDependencyInput = CommandInput<"mission.task.dependency.add">;
+export type RemoveMissionTaskDependencyInput = CommandInput<"mission.task.dependency.remove">;
+export type RetryMissionTaskInput = CommandInput<"mission.task.retry">;
+export type CancelMissionTaskInput = CommandInput<"mission.task.cancel">;
+export type StartMissionSchedulerInput = CommandInput<"mission.scheduler.start">;
+export type PauseMissionSchedulerInput = CommandInput<"mission.scheduler.pause">;
+export type ResumeMissionSchedulerInput = CommandInput<"mission.scheduler.resume">;
+export type RequestMissionIntegrationInput = CommandInput<"mission.integration.request">;
+export type ApproveMissionIntegrationInput = CommandInput<"mission.integration.approve">;
+export type AbortMissionIntegrationInput = CommandInput<"mission.integration.abort">;
+export type RemoveMissionWorktreeInput = CommandInput<"mission.worktree.remove">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -385,3 +400,149 @@ export const cancelMission: (input: CancelMissionInput) => CommandEffect = Effec
     createdAt: metadata.createdAt,
   });
 });
+
+export const configureMissionTeam: (input: ConfigureMissionTeamInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.configureMissionTeam",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "mission.team.configure",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const upsertMissionAgent: (input: UpsertMissionAgentInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.upsertMissionAgent",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "mission.agent.upsert",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const removeMissionAgent: (input: RemoveMissionAgentInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.removeMissionAgent",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "mission.agent.remove",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const updateMissionAgentPermissions: (
+  input: UpdateMissionAgentPermissionsInput,
+) => CommandEffect = Effect.fn("EnvironmentCommands.updateMissionAgentPermissions")(
+  function* (input) {
+    return yield* dispatch({
+      ...input,
+      type: "mission.agent.permissions.update",
+      commandId: yield* commandId(input),
+    });
+  },
+);
+
+export const addMissionTaskDependency: (input: AddMissionTaskDependencyInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.addMissionTaskDependency")(function* (input) {
+    return yield* dispatch({
+      ...input,
+      type: "mission.task.dependency.add",
+      commandId: yield* commandId(input),
+    });
+  });
+
+export const removeMissionTaskDependency: (
+  input: RemoveMissionTaskDependencyInput,
+) => CommandEffect = Effect.fn("EnvironmentCommands.removeMissionTaskDependency")(
+  function* (input) {
+    return yield* dispatch({
+      ...input,
+      type: "mission.task.dependency.remove",
+      commandId: yield* commandId(input),
+    });
+  },
+);
+
+export const retryMissionTask: (input: RetryMissionTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.retryMissionTask",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "mission.task.retry",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const cancelMissionTask: (input: CancelMissionTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.cancelMissionTask",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "mission.task.cancel",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const startMissionScheduler: (input: StartMissionSchedulerInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.startMissionScheduler")(function* (input) {
+    return yield* dispatch({
+      ...input,
+      type: "mission.scheduler.start",
+      commandId: yield* commandId(input),
+    });
+  });
+
+export const pauseMissionScheduler: (input: PauseMissionSchedulerInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.pauseMissionScheduler")(function* (input) {
+    return yield* dispatch({
+      ...input,
+      type: "mission.scheduler.pause",
+      commandId: yield* commandId(input),
+    });
+  });
+
+export const resumeMissionScheduler: (input: ResumeMissionSchedulerInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.resumeMissionScheduler")(function* (input) {
+    return yield* dispatch({
+      ...input,
+      type: "mission.scheduler.resume",
+      commandId: yield* commandId(input),
+    });
+  });
+
+export const requestMissionIntegration: (input: RequestMissionIntegrationInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.requestMissionIntegration")(function* (input) {
+    return yield* dispatch({
+      ...input,
+      type: "mission.integration.request",
+      commandId: yield* commandId(input),
+    });
+  });
+
+export const approveMissionIntegration: (input: ApproveMissionIntegrationInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.approveMissionIntegration")(function* (input) {
+    return yield* dispatch({
+      ...input,
+      type: "mission.integration.approve",
+      commandId: yield* commandId(input),
+    });
+  });
+
+export const abortMissionIntegration: (input: AbortMissionIntegrationInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.abortMissionIntegration")(function* (input) {
+    return yield* dispatch({
+      ...input,
+      type: "mission.integration.abort",
+      commandId: yield* commandId(input),
+    });
+  });
+
+export const removeMissionWorktree: (input: RemoveMissionWorktreeInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.removeMissionWorktree")(function* (input) {
+    return yield* dispatch({
+      ...input,
+      type: "mission.worktree.remove",
+      commandId: yield* commandId(input),
+    });
+  });

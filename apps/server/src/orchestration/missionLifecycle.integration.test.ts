@@ -1,8 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AgentRoleId,
   AgentRunId,
   CommandId,
+  ManagedWorktreeId,
   MissionId,
+  MissionAgentId,
   MissionTaskId,
   ProjectId,
   ProviderInstanceId,
@@ -193,6 +196,18 @@ it.layer(NodeServices.layer)("mission lifecycle integration", (it) => {
       expect(harness.model.agentRuns?.[0]?.status).toBe("completed");
       expect(harness.model.agentRuns?.[0]?.providerSessionId).toBe("provider-session-run-1");
 
+      const linkedThreadDeletion = yield* Effect.flip(
+        decideOrchestrationCommand({
+          readModel: harness.model,
+          command: {
+            type: "thread.delete",
+            commandId: commandId("command-delete-mission-thread"),
+            threadId: ThreadId.make("mission-thread-first"),
+          },
+        }),
+      );
+      expect(linkedThreadDeletion.message).toContain("retained as mission run");
+
       const duplicate = yield* Effect.flip(
         decideOrchestrationCommand({
           readModel: harness.model,
@@ -228,11 +243,12 @@ it.layer(NodeServices.layer)("mission lifecycle integration", (it) => {
         createdAt: "2026-08-03T00:01:01.000Z",
       });
 
-      expect(harness.events.slice(-2).map((event) => event.type)).toEqual([
+      expect(harness.events.slice(-3).map((event) => event.type)).toEqual([
         "mission.cancellation-requested",
         "agent_run.cancellation-requested",
+        "mission.cancelled",
       ]);
-      expect(harness.model.missions?.[0]?.status).toBe("running");
+      expect(harness.model.missions?.[0]?.status).toBe("cancelled");
       expect(harness.model.agentRuns?.[0]?.status).toBe("cancelling");
 
       harness = yield* dispatchCommand(harness, {
@@ -242,10 +258,9 @@ it.layer(NodeServices.layer)("mission lifecycle integration", (it) => {
         agentRunId: firstRunId,
         cancelledAt: "2026-08-03T00:01:02.000Z",
       });
-      expect(harness.events.slice(-3).map((event) => event.type)).toEqual([
+      expect(harness.events.slice(-2).map((event) => event.type)).toEqual([
         "agent_run.cancelled",
         "task.cancelled",
-        "mission.cancelled",
       ]);
       expect(harness.model.missions?.[0]?.status).toBe("cancelled");
       expect(harness.model.missionTasks?.[0]?.status).toBe("cancelled");
@@ -264,6 +279,31 @@ it.layer(NodeServices.layer)("mission lifecycle integration", (it) => {
         }),
       );
       expect(lateCompletion.message).toContain("cannot transition from 'cancelled' to 'completed'");
+    }),
+  );
+
+  it.effect("records provider failure during cancellation without reopening the mission", () =>
+    Effect.gen(function* () {
+      let harness = yield* seedMission();
+      harness = yield* startMission(harness);
+      harness = yield* dispatchCommand(harness, {
+        type: "mission.cancel",
+        commandId: commandId("command-cancel-before-failure"),
+        missionId,
+        createdAt: "2026-08-03T00:01:10.000Z",
+      });
+      harness = yield* dispatchCommand(harness, {
+        type: "mission.agent-run.fail",
+        commandId: commandId("command-cancel-provider-failure"),
+        missionId,
+        agentRunId: firstRunId,
+        errorSummary: "Provider failed while stopping.",
+        failedAt: "2026-08-03T00:01:11.000Z",
+      });
+
+      expect(harness.model.missions?.[0]?.status).toBe("cancelled");
+      expect(harness.model.agentRuns?.[0]?.status).toBe("failed");
+      expect(harness.model.missionTasks?.[0]?.status).toBe("failed");
     }),
   );
 
@@ -415,6 +455,186 @@ it.layer(NodeServices.layer)("mission lifecycle integration", (it) => {
       );
       expect(harness.model.missions?.[0]?.status).toBe("backlog");
       expect(harness.model.agentRuns).toHaveLength(0);
+    }),
+  );
+
+  it.effect("runs isolated Phase 2 tasks concurrently and cancels only the targeted task", () =>
+    Effect.gen(function* () {
+      let harness = yield* seedMission();
+      const secondTaskId = MissionTaskId.make("mission-task-integration-second");
+      const firstAgentId = MissionAgentId.make("mission-agent-first");
+      const secondAgentId = MissionAgentId.make("mission-agent-second");
+      const firstWorktreeId = ManagedWorktreeId.make("mission-worktree-first");
+      const secondWorktreeId = ManagedWorktreeId.make("mission-worktree-second");
+      const secondRunId = AgentRunId.make("mission-run-second");
+      const agentRoleId = AgentRoleId.make("built-in:implementer");
+
+      harness = yield* dispatchCommand(harness, {
+        type: "mission.team.configure",
+        commandId: commandId("command-team-automatic-integration"),
+        missionId,
+        settings: {
+          maximumConcurrentAgents: 3,
+          maximumConcurrentWriteAgents: 2,
+          defaultMaximumTaskAttempts: 3,
+          autoStartReadyTasks: false,
+          integrationMode: "automatic_when_clean",
+        },
+        updatedAt: "2026-08-03T00:06:59.000Z",
+      });
+
+      harness = yield* dispatchCommand(harness, {
+        type: "mission.task.create",
+        commandId: commandId("command-task-create-second"),
+        missionId,
+        taskId: secondTaskId,
+        title: "Run the other agent",
+        description: "Prove independent tasks can overlap safely.",
+        position: 1,
+        createdAt: "2026-08-03T00:07:00.000Z",
+      });
+      for (const [agentId, displayName] of [
+        [firstAgentId, "Implementer one"],
+        [secondAgentId, "Implementer two"],
+      ] as const) {
+        harness = yield* dispatchCommand(harness, {
+          type: "mission.agent.upsert",
+          commandId: commandId(`command-agent-${agentId}`),
+          missionId,
+          agent: {
+            id: agentId,
+            missionId,
+            roleId: agentRoleId,
+            roleKind: "implementer",
+            displayName,
+            providerInstanceId,
+            model: "gpt-5.4",
+            reasoningLevel: null,
+            permissions: ["read_files", "search_repository", "run_tests", "write_files"],
+            maximumConcurrentRuns: 1,
+            status: "idle",
+            createdAt: "2026-08-03T00:07:01.000Z",
+            updatedAt: "2026-08-03T00:07:01.000Z",
+          },
+        });
+      }
+      for (const [worktreeId, ownedTaskId, suffix] of [
+        [firstWorktreeId, taskId, "first"],
+        [secondWorktreeId, secondTaskId, "second"],
+      ] as const) {
+        harness = yield* dispatchCommand(harness, {
+          type: "mission.worktree.record",
+          commandId: commandId(`command-worktree-${suffix}`),
+          missionId,
+          worktree: {
+            id: worktreeId,
+            projectId,
+            missionId,
+            taskId: ownedTaskId,
+            purpose: "task",
+            repositoryPath: "/tmp/mission-integration",
+            worktreePath: `/tmp/mission-integration-worktrees/${suffix}`,
+            branchName: `agent/mission/${suffix}`,
+            baseBranch: "main",
+            baseCommit: "1111111111111111111111111111111111111111",
+            headCommit: "1111111111111111111111111111111111111111",
+            status: "ready",
+            changedFileCount: 0,
+            hasUncommittedChanges: false,
+            conflictingFiles: [],
+            createdAt: "2026-08-03T00:07:02.000Z",
+            updatedAt: "2026-08-03T00:07:02.000Z",
+            removedAt: null,
+            errorSummary: null,
+          },
+        });
+      }
+
+      const startTask = (
+        selectedTaskId: MissionTaskId,
+        agentId: MissionAgentId,
+        worktreeId: ManagedWorktreeId,
+        selectedRunId: AgentRunId,
+      ) =>
+        dispatchCommand(harness, {
+          type: "mission.start",
+          commandId: commandId(`command-start-${selectedRunId}`),
+          missionId,
+          taskId: selectedTaskId,
+          agentRunId: selectedRunId,
+          threadId: ThreadId.make(`thread-${selectedRunId}`),
+          providerInstanceId,
+          modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+          runtimeMode: "auto-accept-edits",
+          missionAgentId: agentId,
+          worktreeId,
+          permissions: ["read_files", "search_repository", "run_tests", "write_files"],
+          writeCapable: true,
+          createdAt: "2026-08-03T00:07:03.000Z",
+        });
+      harness = yield* startTask(taskId, firstAgentId, firstWorktreeId, firstRunId);
+      harness = yield* startTask(secondTaskId, secondAgentId, secondWorktreeId, secondRunId);
+
+      expect(harness.model.agentRuns?.filter((run) => run.status === "starting")).toHaveLength(2);
+      expect(new Set(harness.model.agentRuns?.map((run) => run.worktreeId)).size).toBe(2);
+      expect(harness.model.missionAgents?.every((agent) => agent.status === "running")).toBe(true);
+
+      harness = yield* dispatchCommand(harness, {
+        type: "mission.agent-run.complete",
+        commandId: commandId("command-phase-two-first-complete"),
+        missionId,
+        agentRunId: firstRunId,
+        completedAt: "2026-08-03T00:07:04.000Z",
+      });
+      expect(harness.model.missions?.[0]?.status).toBe("running");
+      expect(harness.model.missionTasks?.find((task) => task.id === taskId)?.status).toBe(
+        "completed",
+      );
+      expect(
+        harness.model.managedWorktrees?.find((worktree) => worktree.id === firstWorktreeId)?.status,
+      ).toBe("integration_ready");
+      expect(harness.model.missionAgents?.find((agent) => agent.id === firstAgentId)?.status).toBe(
+        "idle",
+      );
+
+      harness = yield* dispatchCommand(harness, {
+        type: "mission.integration.request",
+        commandId: commandId("command-phase-two-first-integration-request"),
+        missionId,
+        taskId,
+        worktreeId: firstWorktreeId,
+        requestedAt: "2026-08-03T00:07:04.500Z",
+      });
+      expect(harness.events.at(-1)?.type).toBe("integration.approved");
+      expect(
+        harness.model.missionTasks?.find((task) => task.id === taskId)?.integrationStatus,
+      ).toBe("ready");
+
+      harness = yield* dispatchCommand(harness, {
+        type: "mission.task.cancel",
+        commandId: commandId("command-phase-two-second-cancel-request"),
+        missionId,
+        taskId: secondTaskId,
+        requestedAt: "2026-08-03T00:07:05.000Z",
+      });
+      harness = yield* dispatchCommand(harness, {
+        type: "mission.agent-run.cancel",
+        commandId: commandId("command-phase-two-second-cancelled"),
+        missionId,
+        agentRunId: secondRunId,
+        cancelledAt: "2026-08-03T00:07:06.000Z",
+      });
+
+      expect(harness.model.missions?.[0]?.status).toBe("running");
+      expect(harness.model.missionTasks?.find((task) => task.id === taskId)?.status).toBe(
+        "completed",
+      );
+      expect(harness.model.missionTasks?.find((task) => task.id === secondTaskId)?.status).toBe(
+        "cancelled",
+      );
+      expect(harness.model.missionAgents?.find((agent) => agent.id === secondAgentId)?.status).toBe(
+        "idle",
+      );
     }),
   );
 });

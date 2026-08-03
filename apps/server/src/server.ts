@@ -54,6 +54,8 @@ import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationRe
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { MissionRunReactorLive } from "./orchestration/Layers/MissionRunReactor.ts";
+import { MissionSchedulerReactorLive } from "./orchestration/Layers/MissionSchedulerReactor.ts";
+import { MissionWorktreeReactorLive } from "./orchestration/Layers/MissionWorktreeReactor.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
@@ -68,6 +70,7 @@ import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import * as MissionGit from "./mission-git/MissionGitService.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
@@ -213,11 +216,17 @@ const PlatformServicesLive = Layer.unwrap(
   }),
 );
 
+const MissionRuntimeLayerLive = Layer.mergeAll(
+  MissionRunReactorLive,
+  MissionSchedulerReactorLive,
+  MissionWorktreeReactorLive,
+).pipe(Layer.provideMerge(MissionGit.layer));
+
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(ProviderCommandReactorLive),
-  Layer.provideMerge(MissionRunReactorLive),
+  Layer.provideMerge(MissionRuntimeLayerLive),
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(AgentAwarenessRelay.layer.pipe(Layer.provide(ServerSecretStore.layer))),

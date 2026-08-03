@@ -2,100 +2,117 @@
 
 > For maintainers. Using missions? See [the user guide](../user/missions.md).
 
-Phase 1 adds a mission aggregate to the existing event-sourced orchestration engine. It reuses the
-same commands, append-only event store, projection transaction, provider sessions, Effect RPC
-WebSocket, and client connection runtime as threads. There is no second API or conversation-backed
-mission database.
+Phase 2 extends the Phase 1 mission aggregate inside the existing event-sourced orchestration
+engine. Commands, the append-only event store, transactional projections, provider sessions, Effect
+RPC WebSocket transport, and the shared client runtime remain the source of truth. Git lifecycle and
+scheduling are reactors around that aggregate, not separate mission systems.
 
 ## Domain model
-
-The ownership hierarchy is:
 
 ```text
 Project
 `-- Mission
-    |-- MissionTask
-    |-- AgentRun
-    `-- OrchestrationEvent
+    |-- Team settings
+    |-- Mission agents -> provider instance + model + role permissions
+    |-- Tasks
+    |   |-- Dependencies
+    |   |-- Managed task worktree
+    |   |-- Agent runs -> linked threads
+    |   `-- Structured handoffs
+    |-- Managed integration worktree
+    `-- Orchestration events
 ```
 
-A mission references the existing `OrchestrationProject`. A run references one mission, an optional
-task, one T3 thread, and one configured provider instance. The thread is the provider conversation;
-it is linked execution history, not the mission source of truth.
-
 The provider-neutral schemas and transition helpers live in
-[`packages/contracts/src/mission.ts`](../../packages/contracts/src/mission.ts). Mission command,
-event, stream, and detail snapshot schemas live beside the existing orchestration contracts in
+[`packages/contracts/src/mission.ts`](../../packages/contracts/src/mission.ts). Commands, events,
+and snapshots live in
 [`packages/contracts/src/orchestration.ts`](../../packages/contracts/src/orchestration.ts).
 
-### Statuses
+A mission run links exactly one provider-backed thread. Phase 1 runs keep their original nullable
+agent/worktree fields and single-run behavior. Phase 2 write runs require an assigned mission agent,
+task, and ready managed worktree. The run records the effective permissions and whether it is write
+capable, so concurrency decisions are durable and auditable.
 
-Mission statuses are `backlog`, `planning`, `ready`, `running`, `verification`, `review`, `blocked`,
-`completed`, `cancelled`, and `failed`.
+## Persistence and migration
 
-Task statuses are `backlog`, `ready`, `running`, `blocked`, `completed`, `cancelled`, and `failed`.
-Agent-run statuses are `starting`, `running`, `cancelling`, `completed`, `cancelled`, `failed`, and
-`interrupted`.
+Migration 036 owns the Phase 1 mission, task, and run projections. Migration 037 adds:
 
-Terminal run transitions are one-way. Repeating a terminal transition, completing a cancelled run,
-or cancelling a completed run is rejected before events are appended.
+- five provider-neutral built-in roles;
+- `projection_agent_roles` and `projection_mission_agents`;
+- `projection_task_dependencies` with cycle-safe transactional insertion;
+- `projection_managed_worktrees`;
+- `projection_agent_handoffs`;
+- mission team/scheduler settings and task/run Phase 2 columns.
 
-## Commands and events
+The Phase 1 one-active-run-per-mission index is replaced. Partial indexes allow parallel runs while
+enforcing one active write run per worktree. Paths and active worktree ownership are unique, foreign
+keys retain mission/task relationships, and no provider secrets or Git credentials are persisted.
 
-Client-dispatchable mission commands are:
+Projection repositories are under
+[`apps/server/src/persistence`](../../apps/server/src/persistence). Mission detail snapshots load the
+mission, tasks, all active and historical runs, roles, agents, dependencies, worktrees, and handoffs
+in one read transaction so clients never assemble a mixed-version graph.
 
-- `mission.create` and `mission.update`;
-- `mission.task.create` and `mission.task.update`;
-- `mission.start`, `mission.retry`, and `mission.cancel`.
+## Scheduler and concurrency
 
-Provider lifecycle integration uses server-only commands:
+[`MissionScheduler.ts`](../../apps/server/src/orchestration/MissionScheduler.ts) is a pure,
+provider-neutral planner. It sorts tasks deterministically and evaluates dependency completion,
+required handoffs, agent/model availability, worktree state, mission/write/agent/provider capacity,
+and one-writer ownership. It returns explicit selected, ready, blocked, and capacity-limited reasons.
 
-- `mission.agent-run.mark-running`;
-- `mission.agent-run.complete`;
-- `mission.agent-run.fail`;
-- `mission.agent-run.cancel`;
-- `mission.agent-run.interrupt`.
+[`MissionSchedulerReactor.ts`](../../apps/server/src/orchestration/Layers/MissionSchedulerReactor.ts)
+persists ready/blocked and concurrency-limited decisions through orchestration commands. Automatic
+starts happen only after explicit scheduler/event triggers when `autoStartReadyTasks` is enabled.
+Startup recovery recomputes readiness but deliberately passes `allowStarts: false`, so a restart
+cannot silently relaunch write agents.
 
-The decider emits provider-neutral events. Important families are `mission.*`, `task.*`, and
-`agent_run.*`; payloads contain mission identifiers and normalized lifecycle data rather than raw
-provider protocol responses. See [`decider.ts`](../../apps/server/src/orchestration/decider.ts) and
-[`projector.ts`](../../apps/server/src/orchestration/projector.ts).
+Read-only roles receive `approval-required`; write-capable roles receive `auto-accept-edits` and must
+have their own managed worktree. The decider enforces mission-wide, writer, per-agent, task, and
+worktree limits again at command time, preventing stale scheduler/UI decisions from racing.
 
-As with thread commands, the orchestration engine serializes commands, checks durable command
-receipts, appends all planned events and projection mutations in one SQL transaction, and publishes
-events only after commit. A lifecycle command that emits several events therefore cannot expose a
-half-updated mission.
+## Managed Git lifecycle
 
-## Persistence
+[`MissionGitService.ts`](../../apps/server/src/mission-git/MissionGitService.ts) is the safety boundary
+for repository inspection, branch/worktree creation, status reconciliation, conflict preflight,
+integration, abort, and removal. All Git tests use temporary repositories.
 
-Migration 036 adds three read-model tables:
+The preferred graph is:
 
-- `projection_missions`;
-- `projection_mission_tasks`;
-- `projection_agent_runs`.
+```text
+project base branch
+`-- mission integration branch + worktree
+    |-- task branch + worktree
+    `-- task branch + worktree
+```
 
-The authoritative history remains the append-only `orchestration_events` table. Projection rows
-store current state for efficient board, recovery, and detail queries. The projection repositories
-are under [`apps/server/src/persistence/Services`](../../apps/server/src/persistence/Services) with
-their SQLite layers under [`apps/server/src/persistence/Layers`](../../apps/server/src/persistence/Layers).
+The service validates Git availability, repository identity, refs, in-progress operations, canonical
+path containment, branch/path uniqueness, and worktree overlap. It never stashes or discards the
+main worktree, uses force removal, deletes unmerged branches, or integrates into the default branch.
 
-Database constraints reinforce the domain model:
+[`MissionWorktreeReactor.ts`](../../apps/server/src/orchestration/Layers/MissionWorktreeReactor.ts)
+creates the integration worktree followed by missing write-task worktrees, records every lifecycle
+transition through commands, and re-inspects managed paths after restart and relevant events.
+External removal, branch mismatch, dirty state, conflicts, and completed integration are projected
+honestly. Dirty, active, conflicted, or unintegrated worktrees fail closed during removal.
 
-- mission, task, and run statuses have `CHECK` constraints;
-- project, mission, and task relationships use foreign keys;
-- a composite foreign key prevents a run from referencing a task owned by another mission;
-- a partial unique index permits at most one `starting`, `running`, or `cancelling` run per mission;
-- project/status/time, mission/position, run/status, thread, and event-stream lookups are indexed.
+Manual integration is the default. Approval starts a merge inside the mission integration worktree
+in dependency order. Clean, already-integrated, conflicted, failed, and aborted outcomes each append
+typed events. A conflict retains Git's merge state and conflicting files until the user explicitly
+aborts or resolves it.
 
-Event sequence is the stable ordering key. Timestamps describe when work happened but do not replace
-sequence ordering.
+## Provider execution and handoffs
 
-## Provider execution and cancellation
+[`MissionRunReactor.ts`](../../apps/server/src/orchestration/Layers/MissionRunReactor.ts) resolves the
+assigned worktree and branch into `thread.create`, making the worktree the provider execution root.
+The prompt contains only the mission objective, selected task, role and effective permissions,
+assigned path, predecessor handoff summaries, safety limits, and completion requirements. It does
+not copy the entire originating conversation.
 
-Starting or retrying creates one `AgentRun` and one linked thread, then uses the existing provider
-instance, model selection, session directory, and command reactor to start the turn. The provider
-adapter remains selected at the existing provider boundary; mission code does not branch on Codex,
-Claude, Cursor, Grok, or OpenCode response shapes.
+Completed, failed, cancelled, and interrupted Phase 2 runs emit a structured `AgentHandoff`, then a
+reconciliation event. The current provider-neutral completion stream does not expose a trustworthy
+machine-readable model handoff, so the server records a conservative outcome summary and treats Git
+status as authoritative for changed paths. The schema leaves decisions, commands, artifacts, and
+unresolved problems available for richer adapters later without storing secrets.
 
 The durable provider association is the run's `threadId` plus `providerInstanceId`. When an adapter
 returns a stable provider-native session identifier, the provider-neutral session contract carries
@@ -109,47 +126,50 @@ session produces `agent_run.cancelled`, `task.cancelled`, and `mission.cancelled
 produces failure events instead. Interruption uses its own terminal events and cannot be projected
 as completion.
 
-## Restart recovery
+Mission failure is isolated to the affected Phase 2 task; independent siblings remain running or
+eligible. Legacy single-agent failures retain Phase 1 mission-failed behavior. A completed task
+worktree becomes integration-ready, but the mission completes only after all tasks are complete and
+no sibling run remains active.
+
+Mission-linked threads are retained as durable run history. `thread.delete` rejects them; archiving
+remains available and does not remove managed Git state.
+
+## Cancellation and restart recovery
 
 Startup recovery queries active agent runs in deterministic creation order. A provider-native
 session identifier alone is not a safe cross-process resume capability, so Phase 1 does not attempt
 automatic resume. The server dispatches `mission.agent-run.interrupt` exactly once for each active
 run.
 
-The interruption transition:
+Task cancellation emits a task-scoped request and interrupts only the matching active run. Mission
+cancellation atomically appends the mission request, cancellation requests for all active runs,
+queued-task cancellation, and terminal mission cancellation. This stops future scheduler selection
+immediately while provider shutdown finishes asynchronously. Worktrees and branches are untouched.
 
-1. marks the run `interrupted` with a reason;
-2. moves a running task to `blocked`;
-3. moves the mission to `blocked`;
-4. appends `agent_run.interrupted` and `mission.recovery-blocked` history;
-5. leaves `mission.retry` available to create a new run and thread.
+At reactor startup, every still-active run receives one deterministic interruption command and a
+handoff. Phase 2 tasks become blocked for explicit retry while unrelated work is preserved; legacy
+single-agent missions keep the Phase 1 recovery-blocked transition. Worktree recovery independently
+compares persisted records with actual Git registration and status. Neither reactor resumes agents.
 
-Recovery never synthesizes a successful completion. Terminal-state guards and command receipts
-make repeated recovery or late provider results harmless.
+## Client surfaces
 
-## Live reads
-
-Mission clients use two streams on the existing authenticated RPC socket:
-
-- `orchestration.subscribeMissions` sends a project-filtered board snapshot and mission summary
-  updates;
-- `orchestration.subscribeMission` sends a detail snapshot followed by ordered mission events.
-
-Both support an `afterSequence` cursor and an optional synchronization marker. On reconnect, the
-shared client runtime refreshes from a server snapshot and then resumes the stream. React consumes
-that environment-scoped state; it does not maintain a second authoritative mission store.
+Mission commands and live reduction are shared through
+[`packages/client-runtime`](../../packages/client-runtime). The web mission route is the Electron
+renderer for the desktop team editor, accessible dependency graph, active-agent timeline, structured
+handoffs, worktree safety cards, and dependency-ordered integration queue. Mobile and remote surfaces
+are outside Lyn Code's product and Phase 2 acceptance scope.
 
 ## Focused verification
 
-Run the Phase 1 domain and persistence coverage with:
+Relevant proof lives in:
 
-```powershell
-.\node_modules\.bin\vp.cmd test run apps/server/src/orchestration/missionLifecycle.integration.test.ts apps/server/src/persistence/Migrations/036_MissionFoundation.test.ts apps/server/src/persistence/Layers/MissionProjectionRepositories.test.ts
-```
+- migration, repository, restart, dependency-cycle, and one-writer tests under
+  `apps/server/src/persistence`;
+- temporary-repository Git and worktree reactor tests under `apps/server/src/mission-git` and
+  `apps/server/src/orchestration/Layers`;
+- pure scheduler and mission lifecycle integration tests under `apps/server/src/orchestration`;
+- shared runtime and mission component tests under `packages/client-runtime` and `apps/web`.
 
-These tests cover lifecycle ordering, duplicate and late terminal rejection, cancellation, provider
-failure and retry, deterministic interruption recovery, clean and incremental migrations, active-run
-race protection, and file-backed restart persistence.
-
-Phase 1 deliberately excludes parallel agents, worktree management, GitHub automation, semantic
-memory, automatic model routing, analytics dashboards, and automatic verification or merge flows.
+Phase 2 deliberately excludes GitHub/PR automation, pushing branches, default-branch merging,
+semantic memory, model-routing intelligence, usage dashboards, and an advanced verification
+pipeline.

@@ -1,6 +1,7 @@
 import {
   CommandId,
   EnvironmentId,
+  MissionId,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
   ThreadId,
@@ -23,8 +24,10 @@ import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
   archiveThread,
+  configureMissionTeam,
   createProject,
   settleThread,
+  startMissionScheduler,
   stopThreadSession,
   unsettleThread,
 } from "./commands.ts";
@@ -169,6 +172,40 @@ describe("environment commands", () => {
           reason: "user",
         },
       ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("dispatches Phase 2 mission commands with caller timestamps and generated ids", () =>
+    Effect.gen(function* () {
+      const dispatched: ClientOrchestrationCommand[] = [];
+      const supervisor = yield* makeSupervisor(dispatched);
+      const missionId = MissionId.make("mission-1");
+
+      yield* configureMissionTeam({
+        missionId,
+        settings: {
+          maximumConcurrentAgents: 3,
+          maximumConcurrentWriteAgents: 2,
+          defaultMaximumTaskAttempts: 3,
+          autoStartReadyTasks: true,
+          integrationMode: "manual",
+        },
+        updatedAt: "2026-08-03T12:00:00.000Z",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      yield* startMissionScheduler({
+        missionId,
+        requestedAt: "2026-08-03T12:01:00.000Z",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(dispatched.map((command) => command.type)).toEqual([
+        "mission.team.configure",
+        "mission.scheduler.start",
+      ]);
+      expect(dispatched[0]).toMatchObject({
+        commandId: "00000000-0000-4000-8000-000000000000",
+        missionId,
+        updatedAt: "2026-08-03T12:00:00.000Z",
+      });
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
 });

@@ -35,6 +35,10 @@ export interface ProjectionAgentRunRepositoryShape {
     input: ListProjectionAgentRunsInput,
   ) => Effect.Effect<Option.Option<ProjectionAgentRun>, ProjectionRepositoryError>;
 
+  readonly listActiveByMissionId: (
+    input: ListProjectionAgentRunsInput,
+  ) => Effect.Effect<ReadonlyArray<ProjectionAgentRun>, ProjectionRepositoryError>;
+
   readonly getByThreadId: (
     input: GetProjectionAgentRunByThreadInput,
   ) => Effect.Effect<Option.Option<ProjectionAgentRun>, ProjectionRepositoryError>;

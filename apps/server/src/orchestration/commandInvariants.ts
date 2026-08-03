@@ -1,7 +1,13 @@
 import type {
+  AgentHandoff,
+  AgentHandoffId,
   AgentRun,
   AgentRunId,
+  ManagedWorktree,
+  ManagedWorktreeId,
   Mission,
+  MissionAgent,
+  MissionAgentId,
   MissionId,
   MissionTask,
   MissionTaskId,
@@ -10,6 +16,8 @@ import type {
   OrchestrationReadModel,
   OrchestrationThread,
   ProjectId,
+  TaskDependency,
+  TaskDependencyId,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -80,6 +88,43 @@ export function findActiveAgentRun(
   return readModel.agentRuns?.find(
     (run) => run.missionId === missionId && isActiveAgentRunStatus(run.status),
   );
+}
+
+export function listActiveAgentRuns(
+  readModel: OrchestrationReadModel,
+  missionId: MissionId,
+): ReadonlyArray<AgentRun> {
+  return (readModel.agentRuns ?? []).filter(
+    (run) => run.missionId === missionId && isActiveAgentRunStatus(run.status),
+  );
+}
+
+export function findMissionAgentById(
+  readModel: OrchestrationReadModel,
+  missionAgentId: MissionAgentId,
+): MissionAgent | undefined {
+  return readModel.missionAgents?.find((agent) => agent.id === missionAgentId);
+}
+
+export function findTaskDependencyById(
+  readModel: OrchestrationReadModel,
+  dependencyId: TaskDependencyId,
+): TaskDependency | undefined {
+  return readModel.taskDependencies?.find((dependency) => dependency.id === dependencyId);
+}
+
+export function findManagedWorktreeById(
+  readModel: OrchestrationReadModel,
+  worktreeId: ManagedWorktreeId,
+): ManagedWorktree | undefined {
+  return readModel.managedWorktrees?.find((worktree) => worktree.id === worktreeId);
+}
+
+export function findAgentHandoffById(
+  readModel: OrchestrationReadModel,
+  handoffId: AgentHandoffId,
+): AgentHandoff | undefined {
+  return readModel.agentHandoffs?.find((handoff) => handoff.id === handoffId);
 }
 
 export function requireMission(input: {

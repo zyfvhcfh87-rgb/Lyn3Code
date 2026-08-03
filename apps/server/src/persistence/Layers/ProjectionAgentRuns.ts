@@ -1,8 +1,11 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import { AgentPermissions } from "@t3tools/contracts";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
@@ -27,8 +30,25 @@ const selectAgentRunColumns = `
   started_at AS "startedAt",
   updated_at AS "updatedAt",
   completed_at AS "completedAt",
-  error_summary AS "errorSummary"
+  error_summary AS "errorSummary",
+  mission_agent_id AS "missionAgentId",
+  worktree_id AS "worktreeId",
+  attempt_number AS "attemptNumber",
+  permissions_json AS "permissions",
+  write_capable AS "writeCapable"
 `;
+
+const ProjectionAgentRunDbRow = ProjectionAgentRun.mapFields(
+  Struct.assign({
+    permissions: Schema.fromJsonString(AgentPermissions),
+    writeCapable: Schema.Number,
+  }),
+);
+
+const toProjectionAgentRun = (row: typeof ProjectionAgentRunDbRow.Type): ProjectionAgentRun => ({
+  ...row,
+  writeCapable: row.writeCapable === 1,
+});
 
 const makeProjectionAgentRunRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -50,7 +70,12 @@ const makeProjectionAgentRunRepository = Effect.gen(function* () {
           started_at,
           updated_at,
           completed_at,
-          error_summary
+          error_summary,
+          mission_agent_id,
+          worktree_id,
+          attempt_number,
+          permissions_json,
+          write_capable
         ) VALUES (
           ${row.id},
           ${row.missionId},
@@ -64,7 +89,12 @@ const makeProjectionAgentRunRepository = Effect.gen(function* () {
           ${row.startedAt},
           ${row.updatedAt},
           ${row.completedAt},
-          ${row.errorSummary}
+          ${row.errorSummary},
+          ${row.missionAgentId},
+          ${row.worktreeId},
+          ${row.attemptNumber},
+          ${JSON.stringify(row.permissions)},
+          ${row.writeCapable ? 1 : 0}
         )
         ON CONFLICT (agent_run_id)
         DO UPDATE SET
@@ -79,13 +109,18 @@ const makeProjectionAgentRunRepository = Effect.gen(function* () {
           started_at = excluded.started_at,
           updated_at = excluded.updated_at,
           completed_at = excluded.completed_at,
-          error_summary = excluded.error_summary
+          error_summary = excluded.error_summary,
+          mission_agent_id = excluded.mission_agent_id,
+          worktree_id = excluded.worktree_id,
+          attempt_number = excluded.attempt_number,
+          permissions_json = excluded.permissions_json,
+          write_capable = excluded.write_capable
       `,
   });
 
   const getProjectionAgentRunRow = SqlSchema.findOneOption({
     Request: GetProjectionAgentRunInput,
-    Result: ProjectionAgentRun,
+    Result: ProjectionAgentRunDbRow,
     execute: ({ agentRunId }) =>
       sql`
         SELECT ${sql.unsafe(selectAgentRunColumns)}
@@ -96,19 +131,34 @@ const makeProjectionAgentRunRepository = Effect.gen(function* () {
 
   const getActiveProjectionAgentRunRow = SqlSchema.findOneOption({
     Request: ListProjectionAgentRunsInput,
-    Result: ProjectionAgentRun,
+    Result: ProjectionAgentRunDbRow,
     execute: ({ missionId }) =>
       sql`
         SELECT ${sql.unsafe(selectAgentRunColumns)}
         FROM projection_agent_runs
         WHERE mission_id = ${missionId}
           AND status IN ('starting', 'running', 'cancelling')
+        ORDER BY created_at ASC, agent_run_id ASC
+        LIMIT 1
+      `,
+  });
+
+  const listActiveProjectionAgentRunRowsByMission = SqlSchema.findAll({
+    Request: ListProjectionAgentRunsInput,
+    Result: ProjectionAgentRunDbRow,
+    execute: ({ missionId }) =>
+      sql`
+        SELECT ${sql.unsafe(selectAgentRunColumns)}
+        FROM projection_agent_runs
+        WHERE mission_id = ${missionId}
+          AND status IN ('starting', 'running', 'cancelling')
+        ORDER BY created_at ASC, agent_run_id ASC
       `,
   });
 
   const getProjectionAgentRunRowByThread = SqlSchema.findOneOption({
     Request: GetProjectionAgentRunByThreadInput,
-    Result: ProjectionAgentRun,
+    Result: ProjectionAgentRunDbRow,
     execute: ({ threadId }) =>
       sql`
         SELECT ${sql.unsafe(selectAgentRunColumns)}
@@ -121,7 +171,7 @@ const makeProjectionAgentRunRepository = Effect.gen(function* () {
 
   const listProjectionAgentRunRows = SqlSchema.findAll({
     Request: ListProjectionAgentRunsInput,
-    Result: ProjectionAgentRun,
+    Result: ProjectionAgentRunDbRow,
     execute: ({ missionId }) =>
       sql`
         SELECT ${sql.unsafe(selectAgentRunColumns)}
@@ -133,7 +183,7 @@ const makeProjectionAgentRunRepository = Effect.gen(function* () {
 
   const listActiveProjectionAgentRunRows = SqlSchema.findAll({
     Request: Schema.Void,
-    Result: ProjectionAgentRun,
+    Result: ProjectionAgentRunDbRow,
     execute: () =>
       sql`
         SELECT ${sql.unsafe(selectAgentRunColumns)}
@@ -150,28 +200,43 @@ const makeProjectionAgentRunRepository = Effect.gen(function* () {
 
   const getById: ProjectionAgentRunRepositoryShape["getById"] = (input) =>
     getProjectionAgentRunRow(input).pipe(
+      Effect.map(Option.map(toProjectionAgentRun)),
       Effect.mapError(toPersistenceSqlError("ProjectionAgentRunRepository.getById:query")),
     );
 
   const getActiveByMissionId: ProjectionAgentRunRepositoryShape["getActiveByMissionId"] = (input) =>
     getActiveProjectionAgentRunRow(input).pipe(
+      Effect.map(Option.map(toProjectionAgentRun)),
       Effect.mapError(
         toPersistenceSqlError("ProjectionAgentRunRepository.getActiveByMissionId:query"),
       ),
     );
 
+  const listActiveByMissionId: ProjectionAgentRunRepositoryShape["listActiveByMissionId"] = (
+    input,
+  ) =>
+    listActiveProjectionAgentRunRowsByMission(input).pipe(
+      Effect.map((rows) => rows.map(toProjectionAgentRun)),
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionAgentRunRepository.listActiveByMissionId:query"),
+      ),
+    );
+
   const getByThreadId: ProjectionAgentRunRepositoryShape["getByThreadId"] = (input) =>
     getProjectionAgentRunRowByThread(input).pipe(
+      Effect.map(Option.map(toProjectionAgentRun)),
       Effect.mapError(toPersistenceSqlError("ProjectionAgentRunRepository.getByThreadId:query")),
     );
 
   const listByMissionId: ProjectionAgentRunRepositoryShape["listByMissionId"] = (input) =>
     listProjectionAgentRunRows(input).pipe(
+      Effect.map((rows) => rows.map(toProjectionAgentRun)),
       Effect.mapError(toPersistenceSqlError("ProjectionAgentRunRepository.listByMissionId:query")),
     );
 
   const listActive: ProjectionAgentRunRepositoryShape["listActive"] = () =>
     listActiveProjectionAgentRunRows().pipe(
+      Effect.map((rows) => rows.map(toProjectionAgentRun)),
       Effect.mapError(toPersistenceSqlError("ProjectionAgentRunRepository.listActive:query")),
     );
 
@@ -179,6 +244,7 @@ const makeProjectionAgentRunRepository = Effect.gen(function* () {
     upsert,
     getById,
     getActiveByMissionId,
+    listActiveByMissionId,
     getByThreadId,
     listByMissionId,
     listActive,

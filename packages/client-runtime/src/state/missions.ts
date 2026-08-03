@@ -1,10 +1,13 @@
 import {
   ORCHESTRATION_WS_METHODS,
+  type AgentHandoff,
   type AgentRun,
   type EnvironmentId,
+  type ManagedWorktree,
   type MissionBoardSnapshot,
   type MissionId,
   type MissionSummary,
+  type MissionAgent,
   type MissionTask,
   type OrchestrationEvent,
   type OrchestrationMissionBoardStreamItem,
@@ -128,6 +131,23 @@ function updateAgentRun(
   return runs.map((run) => (run.id === agentRunId ? update(run) : run));
 }
 
+function upsertById<T extends { readonly id: string }>(
+  items: ReadonlyArray<T>,
+  item: T,
+): ReadonlyArray<T> {
+  return items.some((candidate) => candidate.id === item.id)
+    ? items.map((candidate) => (candidate.id === item.id ? item : candidate))
+    : [...items, item];
+}
+
+function updateById<T extends { readonly id: string }>(
+  items: ReadonlyArray<T>,
+  id: string,
+  update: (item: T) => T,
+): ReadonlyArray<T> {
+  return items.map((item) => (item.id === id ? update(item) : item));
+}
+
 function applyMissionEventToSnapshot(
   snapshot: OrchestrationMissionDetailSnapshot,
   event: OrchestrationEvent,
@@ -135,6 +155,10 @@ function applyMissionEventToSnapshot(
   let mission = snapshot.mission;
   let tasks = snapshot.tasks;
   let agentRuns = snapshot.agentRuns;
+  let missionAgents = snapshot.missionAgents;
+  let taskDependencies = snapshot.taskDependencies;
+  let managedWorktrees = snapshot.managedWorktrees;
+  let agentHandoffs = snapshot.agentHandoffs;
 
   switch (event.type) {
     case "mission.created":
@@ -195,8 +219,177 @@ function applyMissionEventToSnapshot(
           : { description: event.payload.description }),
         ...(event.payload.status === undefined ? {} : { status: event.payload.status }),
         ...(event.payload.position === undefined ? {} : { position: event.payload.position }),
+        ...(event.payload.assignedMissionAgentId === undefined
+          ? {}
+          : { assignedMissionAgentId: event.payload.assignedMissionAgentId }),
+        ...(event.payload.maximumAttempts === undefined
+          ? {}
+          : { maximumAttempts: event.payload.maximumAttempts }),
+        ...(event.payload.requiresDependencyHandoffs === undefined
+          ? {}
+          : { requiresDependencyHandoffs: event.payload.requiresDependencyHandoffs }),
         updatedAt: event.payload.updatedAt,
       }));
+      break;
+    case "mission.team-configured":
+      mission = {
+        ...mission,
+        teamSettings: event.payload.settings,
+        updatedAt: event.payload.updatedAt,
+      };
+      break;
+    case "mission.agent-upserted":
+      missionAgents = upsertById(missionAgents, event.payload.agent);
+      break;
+    case "mission.agent-removed":
+      missionAgents = missionAgents.filter((agent) => agent.id !== event.payload.missionAgentId);
+      break;
+    case "mission.agent-permissions-updated":
+      missionAgents = updateById(
+        missionAgents,
+        event.payload.missionAgentId,
+        (agent): MissionAgent => ({
+          ...agent,
+          permissions: event.payload.permissions,
+          updatedAt: event.payload.updatedAt,
+        }),
+      );
+      break;
+    case "task.dependency-added":
+      taskDependencies = upsertById(taskDependencies, event.payload.dependency);
+      break;
+    case "task.dependency-removed":
+      taskDependencies = taskDependencies.filter(
+        (dependency) => dependency.id !== event.payload.dependencyId,
+      );
+      break;
+    case "task.ready":
+      tasks = updateTask(tasks, event.payload.taskId, (task) => ({
+        ...task,
+        status: "ready",
+        readyAt: event.payload.readyAt,
+        blockedReason: null,
+        updatedAt: event.payload.readyAt,
+      }));
+      break;
+    case "task.blocked":
+      tasks = updateTask(tasks, event.payload.taskId, (task) => ({
+        ...task,
+        status: "blocked",
+        blockedReason: event.payload.reason,
+        updatedAt: event.payload.blockedAt,
+      }));
+      break;
+    case "task.retry-requested":
+      tasks = updateTask(tasks, event.payload.taskId, (task) => ({
+        ...task,
+        attemptCount: event.payload.attemptNumber,
+        blockedReason: null,
+        updatedAt: event.payload.requestedAt,
+      }));
+      break;
+    case "task.cancellation-requested":
+      tasks = updateTask(tasks, event.payload.taskId, (task) => ({
+        ...task,
+        updatedAt: event.payload.requestedAt,
+      }));
+      break;
+    case "managed_worktree.recorded":
+      managedWorktrees = upsertById(managedWorktrees, event.payload.worktree);
+      break;
+    case "managed_worktree.status-updated":
+      managedWorktrees = updateById(
+        managedWorktrees,
+        event.payload.worktreeId,
+        (worktree): ManagedWorktree => ({
+          ...worktree,
+          status: event.payload.status,
+          ...(event.payload.headCommit === undefined
+            ? {}
+            : { headCommit: event.payload.headCommit }),
+          ...(event.payload.changedFileCount === undefined
+            ? {}
+            : { changedFileCount: event.payload.changedFileCount }),
+          ...(event.payload.hasUncommittedChanges === undefined
+            ? {}
+            : { hasUncommittedChanges: event.payload.hasUncommittedChanges }),
+          ...(event.payload.conflictingFiles === undefined
+            ? {}
+            : { conflictingFiles: event.payload.conflictingFiles }),
+          ...(event.payload.errorSummary === undefined
+            ? {}
+            : { errorSummary: event.payload.errorSummary }),
+          ...(event.payload.removedAt === undefined ? {} : { removedAt: event.payload.removedAt }),
+          updatedAt: event.payload.updatedAt,
+        }),
+      );
+      break;
+    case "managed_worktree.removal-requested":
+      managedWorktrees = updateById(
+        managedWorktrees,
+        event.payload.worktreeId,
+        (worktree): ManagedWorktree => ({
+          ...worktree,
+          status: "removing",
+          updatedAt: event.payload.requestedAt,
+        }),
+      );
+      break;
+    case "agent_handoff.created":
+      agentHandoffs = upsertById(agentHandoffs, event.payload.handoff);
+      break;
+    case "agent_handoff.reconciled":
+      agentHandoffs = updateById(
+        agentHandoffs,
+        event.payload.handoffId,
+        (handoff): AgentHandoff => ({
+          ...handoff,
+          reconciliationStatus: event.payload.reconciliationStatus,
+          changedFiles: event.payload.changedFiles,
+          reconciledAt: event.payload.reconciledAt,
+        }),
+      );
+      break;
+    case "scheduler.started":
+    case "scheduler.paused":
+    case "scheduler.resumed":
+      mission = {
+        ...mission,
+        schedulerStatus: event.payload.status,
+        updatedAt: event.payload.occurredAt,
+      };
+      break;
+    case "scheduler.concurrency-limited":
+      break;
+    case "integration.requested":
+    case "integration.approved":
+    case "integration.started":
+    case "integration.completed":
+    case "integration.conflicted":
+    case "integration.aborted":
+    case "integration.failed":
+      tasks = updateTask(tasks, event.payload.taskId, (task) => ({
+        ...task,
+        integrationStatus: event.payload.integrationStatus,
+        updatedAt: event.payload.occurredAt,
+      }));
+      managedWorktrees = updateById(
+        managedWorktrees,
+        event.payload.worktreeId,
+        (worktree): ManagedWorktree => ({
+          ...worktree,
+          ...(event.payload.headCommit === undefined
+            ? {}
+            : { headCommit: event.payload.headCommit }),
+          ...(event.payload.conflictingFiles === undefined
+            ? {}
+            : { conflictingFiles: event.payload.conflictingFiles }),
+          ...(event.payload.errorSummary === undefined
+            ? {}
+            : { errorSummary: event.payload.errorSummary }),
+          updatedAt: event.payload.occurredAt,
+        }),
+      );
       break;
     case "task.started":
       tasks = updateTask(tasks, event.payload.taskId, (task) => ({
@@ -279,6 +472,11 @@ function applyMissionEventToSnapshot(
     mission,
     tasks,
     agentRuns,
+    agentRoles: snapshot.agentRoles,
+    missionAgents,
+    taskDependencies,
+    managedWorktrees,
+    agentHandoffs,
     events: [...snapshot.events, event],
     snapshotSequence: event.sequence,
   };

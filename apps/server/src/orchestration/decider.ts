@@ -1,8 +1,15 @@
 import {
+  ALL_AGENT_PERMISSIONS,
+  DEFAULT_MISSION_TEAM_SETTINGS,
   EventId,
+  canTransitionManagedWorktree,
+  hasWritePermission,
+  isActiveAgentRunStatus,
+  normalizeAgentPermissions,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  wouldCreateTaskDependencyCycle,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
@@ -12,6 +19,11 @@ import type * as PlatformError from "effect/PlatformError";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
   findActiveAgentRun,
+  findAgentHandoffById,
+  findManagedWorktreeById,
+  findMissionAgentById,
+  findTaskDependencyById,
+  listActiveAgentRuns,
   listThreadsByProjectId,
   requireAgentRun,
   requireAgentRunAbsent,
@@ -25,7 +37,6 @@ import {
   requireMissionTaskAbsent,
   requireMissionTaskTransition,
   requireMissionTransition,
-  requireNoActiveAgentRun,
   requireThread,
   requireThreadArchived,
   requireThreadAbsent,
@@ -390,6 +401,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.delete": {
+      const missionRun = (readModel.agentRuns ?? []).find(
+        (run) => run.threadId === command.threadId,
+      );
+      if (missionRun !== undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is retained as mission run '${missionRun.id}' history. Archive it instead.`,
+        });
+      }
       yield* requireThread({
         readModel,
         command,
@@ -1240,6 +1260,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             startedAt: null,
             completedAt: null,
             cancelledAt: null,
+            teamSettings: DEFAULT_MISSION_TEAM_SETTINGS,
+            schedulerStatus: "idle",
           },
         },
       };
@@ -1326,6 +1348,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             updatedAt: command.createdAt,
             startedAt: null,
             completedAt: null,
+            assignedMissionAgentId: null,
+            worktreeId: null,
+            attemptCount: 0,
+            maximumAttempts: mission.teamSettings.defaultMaximumTaskAttempts,
+            readyAt: null,
+            blockedReason: null,
+            integrationStatus: "not_requested",
+            requiresDependencyHandoffs: true,
           },
         },
       };
@@ -1370,6 +1400,30 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         }
         yield* requireMissionTaskTransition({ command, task, status: command.status });
       }
+      if (command.assignedMissionAgentId !== undefined && command.assignedMissionAgentId !== null) {
+        const agent = findMissionAgentById(readModel, command.assignedMissionAgentId);
+        if (agent?.missionId !== command.missionId) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Agent '${command.assignedMissionAgentId}' does not belong to mission '${command.missionId}'.`,
+          });
+        }
+        const activeTaskRun = (readModel.agentRuns ?? []).some(
+          (run) => run.taskId === task.id && isActiveAgentRunStatus(run.status),
+        );
+        if (activeTaskRun && command.assignedMissionAgentId !== task.assignedMissionAgentId) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Task '${task.id}' cannot be reassigned while it has an active run.`,
+          });
+        }
+      }
+      if (command.maximumAttempts !== undefined && command.maximumAttempts < task.attemptCount) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Task '${task.id}' already used ${task.attemptCount} attempts.`,
+        });
+      }
       return {
         ...(yield* withEventBase({
           aggregateKind: "mission",
@@ -1385,6 +1439,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.description !== undefined ? { description: command.description } : {}),
           ...(command.status !== undefined ? { status: command.status } : {}),
           ...(command.position !== undefined ? { position: command.position } : {}),
+          ...(command.assignedMissionAgentId !== undefined
+            ? { assignedMissionAgentId: command.assignedMissionAgentId }
+            : {}),
+          ...(command.maximumAttempts !== undefined
+            ? { maximumAttempts: command.maximumAttempts }
+            : {}),
+          ...(command.requiresDependencyHandoffs !== undefined
+            ? { requiresDependencyHandoffs: command.requiresDependencyHandoffs }
+            : {}),
           updatedAt: command.updatedAt,
         },
       };
@@ -1400,7 +1463,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       const startableStatuses =
         command.type === "mission.retry"
           ? new Set(["blocked", "failed"])
-          : new Set(["backlog", "planning", "ready"]);
+          : new Set(["backlog", "planning", "ready", "running"]);
       if (!startableStatuses.has(mission.status)) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
@@ -1410,7 +1473,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         });
       }
       yield* requireMissionTransition({ command, mission, status: "running" });
-      yield* requireNoActiveAgentRun({ readModel, command, missionId: command.missionId });
       yield* requireAgentRunAbsent({ readModel, command, agentRunId: command.agentRunId });
       yield* requireThreadAbsent({ readModel, command, threadId: command.threadId });
       if (command.providerInstanceId !== command.modelSelection.instanceId) {
@@ -1457,6 +1519,147 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         yield* requireMissionTaskTransition({ command, task, status: "running" });
       }
 
+      const activeRuns = listActiveAgentRuns(readModel, mission.id);
+      const missionAgentId = command.missionAgentId ?? task?.assignedMissionAgentId ?? null;
+      const missionAgent =
+        missionAgentId === null ? undefined : findMissionAgentById(readModel, missionAgentId);
+      const isPhaseTwoRun = missionAgentId !== null || command.worktreeId !== undefined;
+      if (!isPhaseTwoRun && activeRuns.length > 0) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Legacy mission start cannot run beside active agent run '${activeRuns[0]!.id}'.`,
+        });
+      }
+      if (missionAgentId !== null && missionAgent?.missionId !== mission.id) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Mission agent '${missionAgentId}' does not belong to mission '${mission.id}'.`,
+        });
+      }
+      if (missionAgent !== undefined) {
+        if (missionAgent.status === "disabled" || missionAgent.status === "unavailable") {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Mission agent '${missionAgent.id}' is '${missionAgent.status}'.`,
+          });
+        }
+        if (
+          activeRuns.filter((run) => run.missionAgentId === missionAgent.id).length >=
+          missionAgent.maximumConcurrentRuns
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Mission agent '${missionAgent.id}' reached its concurrency limit.`,
+          });
+        }
+      }
+      if (activeRuns.length >= mission.teamSettings.maximumConcurrentAgents) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Mission '${mission.id}' reached its agent concurrency limit.`,
+        });
+      }
+      if (task !== undefined) {
+        if (activeRuns.some((run) => run.taskId === task.id)) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Task '${task.id}' already has an active agent run.`,
+          });
+        }
+        const dependencies = (readModel.taskDependencies ?? []).filter(
+          (dependency) => dependency.missionId === mission.id && dependency.taskId === task.id,
+        );
+        for (const dependency of dependencies) {
+          const prerequisite = missionTasks.find(
+            (entry) => entry.id === dependency.dependsOnTaskId,
+          );
+          if (prerequisite?.status !== "completed") {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: `Task '${task.id}' is waiting for dependency '${dependency.dependsOnTaskId}'.`,
+            });
+          }
+          if (
+            task.requiresDependencyHandoffs &&
+            !(readModel.agentHandoffs ?? []).some(
+              (handoff) => handoff.taskId === dependency.dependsOnTaskId,
+            )
+          ) {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: `Task '${task.id}' is waiting for dependency handoff '${dependency.dependsOnTaskId}'.`,
+            });
+          }
+        }
+      }
+      const permissions = normalizeAgentPermissions(
+        command.permissions ?? missionAgent?.permissions ?? ALL_AGENT_PERMISSIONS,
+      );
+      if (
+        missionAgent !== undefined &&
+        permissions.some((permission) => !missionAgent.permissions.includes(permission))
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Agent run cannot exceed mission agent '${missionAgent.id}' permissions.`,
+        });
+      }
+      const writeCapable = command.writeCapable ?? hasWritePermission(permissions);
+      if (writeCapable !== hasWritePermission(permissions)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Agent-run write capability must match its permissions.",
+        });
+      }
+      const worktreeId = command.worktreeId ?? task?.worktreeId ?? null;
+      const worktree =
+        worktreeId === null ? undefined : findManagedWorktreeById(readModel, worktreeId);
+      if (
+        worktreeId !== null &&
+        (worktree?.missionId !== mission.id ||
+          worktree.status === "planned" ||
+          worktree.status === "creating" ||
+          worktree.status === "removing" ||
+          worktree.status === "removed" ||
+          worktree.status === "failed" ||
+          worktree.status === "orphaned")
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Managed worktree '${worktreeId}' is not available to this mission run.`,
+        });
+      }
+      if (isPhaseTwoRun && writeCapable) {
+        if (
+          task === undefined ||
+          worktree?.missionId !== mission.id ||
+          worktree.taskId !== task.id ||
+          (worktree.status !== "ready" && worktree.status !== "active")
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: "Write-capable task runs require their own ready managed worktree.",
+          });
+        }
+        if (
+          activeRuns.some((run) => run.writeCapable && run.worktreeId === worktreeId) ||
+          activeRuns.filter((run) => run.writeCapable).length >=
+            mission.teamSettings.maximumConcurrentWriteAgents
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Managed worktree '${worktreeId}' or the mission write pool already has an active writer.`,
+          });
+        }
+      }
+      const attemptNumber = command.attemptNumber ?? (task?.attemptCount ?? 0) + 1;
+      if (task !== undefined && attemptNumber > task.maximumAttempts) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Task '${task.id}' exhausted its ${task.maximumAttempts} attempts.`,
+        });
+      }
+
       const run = {
         id: command.agentRunId,
         missionId: command.missionId,
@@ -1471,6 +1674,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         updatedAt: command.createdAt,
         completedAt: null,
         errorSummary: null,
+        missionAgentId,
+        worktreeId,
+        attemptNumber,
+        permissions,
+        writeCapable,
       };
       const events: PlannedOrchestrationEvent[] = [
         {
@@ -1490,6 +1698,23 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         },
       ];
       if (task !== undefined) {
+        if (isPhaseTwoRun) {
+          events.push({
+            ...(yield* withEventBase({
+              aggregateKind: "mission",
+              aggregateId: command.missionId,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            })),
+            type: "task.updated",
+            payload: {
+              missionId: command.missionId,
+              taskId: task.id,
+              assignedMissionAgentId: missionAgentId,
+              updatedAt: command.createdAt,
+            },
+          });
+        }
         events.push({
           ...(yield* withEventBase({
             aggregateKind: "mission",
@@ -1506,6 +1731,23 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           },
         });
       }
+      if (writeCapable && worktree !== undefined && worktree.status !== "active") {
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "mission",
+            aggregateId: command.missionId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "managed_worktree.status-updated",
+          payload: {
+            missionId: command.missionId,
+            worktreeId: worktree.id,
+            status: "active",
+            updatedAt: command.createdAt,
+          },
+        });
+      }
       events.push({
         ...(yield* withEventBase({
           aggregateKind: "mission",
@@ -1519,24 +1761,542 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       return events;
     }
 
+    case "mission.team.configure": {
+      const mission = yield* requireMission({ readModel, command, missionId: command.missionId });
+      if (mission.status === "completed" || mission.status === "cancelled") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Mission '${mission.id}' is terminal and its team cannot be reconfigured.`,
+        });
+      }
+      if (
+        command.settings.maximumConcurrentWriteAgents > command.settings.maximumConcurrentAgents
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Maximum concurrent write agents cannot exceed total concurrent agents.",
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: mission.id,
+          occurredAt: command.updatedAt,
+          commandId: command.commandId,
+        })),
+        type: "mission.team-configured",
+        payload: {
+          missionId: mission.id,
+          settings: command.settings,
+          updatedAt: command.updatedAt,
+        },
+      };
+    }
+
+    case "mission.agent.upsert": {
+      const mission = yield* requireMission({ readModel, command, missionId: command.missionId });
+      if (command.agent.missionId !== mission.id) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Mission agent '${command.agent.id}' has the wrong mission id.`,
+        });
+      }
+      const existing = findMissionAgentById(readModel, command.agent.id);
+      if (
+        existing !== undefined &&
+        listActiveAgentRuns(readModel, mission.id).some((run) => run.missionAgentId === existing.id)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Mission agent '${existing.id}' cannot be changed while it has an active run.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: mission.id,
+          occurredAt: command.agent.updatedAt,
+          commandId: command.commandId,
+        })),
+        type: "mission.agent-upserted",
+        payload: {
+          agent: {
+            ...command.agent,
+            permissions: normalizeAgentPermissions(command.agent.permissions),
+          },
+        },
+      };
+    }
+
+    case "mission.agent.remove": {
+      const mission = yield* requireMission({ readModel, command, missionId: command.missionId });
+      const agent = findMissionAgentById(readModel, command.missionAgentId);
+      if (agent?.missionId !== mission.id) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Mission agent '${command.missionAgentId}' does not exist in mission '${mission.id}'.`,
+        });
+      }
+      if (
+        listActiveAgentRuns(readModel, mission.id).some((run) => run.missionAgentId === agent.id) ||
+        (readModel.missionTasks ?? []).some(
+          (task) =>
+            task.missionId === mission.id &&
+            task.assignedMissionAgentId === agent.id &&
+            task.status !== "completed" &&
+            task.status !== "cancelled",
+        )
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Mission agent '${agent.id}' still owns active or unfinished work.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: mission.id,
+          occurredAt: command.removedAt,
+          commandId: command.commandId,
+        })),
+        type: "mission.agent-removed",
+        payload: {
+          missionId: mission.id,
+          missionAgentId: agent.id,
+          removedAt: command.removedAt,
+        },
+      };
+    }
+
+    case "mission.agent.permissions.update": {
+      const mission = yield* requireMission({ readModel, command, missionId: command.missionId });
+      const agent = findMissionAgentById(readModel, command.missionAgentId);
+      if (agent?.missionId !== mission.id) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Mission agent '${command.missionAgentId}' does not exist in mission '${mission.id}'.`,
+        });
+      }
+      if (
+        listActiveAgentRuns(readModel, mission.id).some((run) => run.missionAgentId === agent.id)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Mission agent '${agent.id}' permissions cannot change during an active run.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: mission.id,
+          occurredAt: command.updatedAt,
+          commandId: command.commandId,
+        })),
+        type: "mission.agent-permissions-updated",
+        payload: {
+          missionId: mission.id,
+          missionAgentId: agent.id,
+          permissions: normalizeAgentPermissions(command.permissions),
+          updatedAt: command.updatedAt,
+        },
+      };
+    }
+
+    case "mission.task.dependency.add": {
+      yield* requireMission({ readModel, command, missionId: command.missionId });
+      const dependency = command.dependency;
+      if (
+        dependency.missionId !== command.missionId ||
+        dependency.taskId === dependency.dependsOnTaskId
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Task dependencies must stay inside one mission and cannot point to themselves.",
+        });
+      }
+      yield* requireMissionTask({
+        readModel,
+        command,
+        missionId: command.missionId,
+        taskId: dependency.taskId,
+      });
+      yield* requireMissionTask({
+        readModel,
+        command,
+        missionId: command.missionId,
+        taskId: dependency.dependsOnTaskId,
+      });
+      const dependencies = readModel.taskDependencies ?? [];
+      if (
+        dependencies.some(
+          (entry) =>
+            entry.id === dependency.id ||
+            (entry.missionId === dependency.missionId &&
+              entry.taskId === dependency.taskId &&
+              entry.dependsOnTaskId === dependency.dependsOnTaskId),
+        )
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "That task dependency already exists.",
+        });
+      }
+      if (wouldCreateTaskDependencyCycle(dependencies, dependency)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "That dependency would create a task cycle.",
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: command.missionId,
+          occurredAt: dependency.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "task.dependency-added",
+        payload: { dependency },
+      };
+    }
+
+    case "mission.task.dependency.remove": {
+      yield* requireMission({ readModel, command, missionId: command.missionId });
+      const dependency = findTaskDependencyById(readModel, command.dependencyId);
+      if (
+        dependency?.missionId !== command.missionId ||
+        dependency.taskId !== command.taskId ||
+        dependency.dependsOnTaskId !== command.dependsOnTaskId
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Task dependency '${command.dependencyId}' does not match the requested edge.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: command.missionId,
+          occurredAt: command.removedAt,
+          commandId: command.commandId,
+        })),
+        type: "task.dependency-removed",
+        payload: {
+          missionId: command.missionId,
+          dependencyId: dependency.id,
+          taskId: dependency.taskId,
+          dependsOnTaskId: dependency.dependsOnTaskId,
+          removedAt: command.removedAt,
+        },
+      };
+    }
+
+    case "mission.task.retry": {
+      const mission = yield* requireMission({ readModel, command, missionId: command.missionId });
+      const task = yield* requireMissionTask({
+        readModel,
+        command,
+        missionId: mission.id,
+        taskId: command.taskId,
+      });
+      if (!new Set(["failed", "blocked", "cancelled"]).has(task.status)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Task '${task.id}' cannot retry from '${task.status}'.`,
+        });
+      }
+      if (task.attemptCount >= task.maximumAttempts) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Task '${task.id}' exhausted its ${task.maximumAttempts} attempts.`,
+        });
+      }
+      if (
+        (readModel.agentRuns ?? []).some(
+          (run) => run.taskId === task.id && isActiveAgentRunStatus(run.status),
+        )
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Task '${task.id}' already has an active run.`,
+        });
+      }
+      return [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "mission",
+            aggregateId: mission.id,
+            occurredAt: command.requestedAt,
+            commandId: command.commandId,
+          })),
+          type: "task.retry-requested",
+          payload: {
+            missionId: mission.id,
+            taskId: task.id,
+            reason: command.reason,
+            attemptNumber: task.attemptCount + 1,
+            requestedAt: command.requestedAt,
+          },
+        },
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "mission",
+            aggregateId: mission.id,
+            occurredAt: command.requestedAt,
+            commandId: command.commandId,
+          })),
+          type: "task.ready",
+          payload: { missionId: mission.id, taskId: task.id, readyAt: command.requestedAt },
+        },
+      ];
+    }
+
+    case "mission.task.cancel": {
+      const mission = yield* requireMission({ readModel, command, missionId: command.missionId });
+      const task = yield* requireMissionTask({
+        readModel,
+        command,
+        missionId: mission.id,
+        taskId: command.taskId,
+      });
+      if (task.status === "completed" || task.status === "cancelled") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Task '${task.id}' is already '${task.status}'.`,
+        });
+      }
+      const activeRun = (readModel.agentRuns ?? []).find(
+        (run) => run.taskId === task.id && isActiveAgentRunStatus(run.status),
+      );
+      const events: PlannedOrchestrationEvent[] = [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "mission",
+            aggregateId: mission.id,
+            occurredAt: command.requestedAt,
+            commandId: command.commandId,
+          })),
+          type: "task.cancellation-requested",
+          payload: { missionId: mission.id, taskId: task.id, requestedAt: command.requestedAt },
+        },
+      ];
+      if (activeRun === undefined) {
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "mission",
+            aggregateId: mission.id,
+            occurredAt: command.requestedAt,
+            commandId: command.commandId,
+          })),
+          type: "task.updated",
+          payload: {
+            missionId: mission.id,
+            taskId: task.id,
+            status: "cancelled",
+            updatedAt: command.requestedAt,
+          },
+        });
+      } else {
+        yield* requireAgentRunTransition({ command, run: activeRun, status: "cancelling" });
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "mission",
+            aggregateId: mission.id,
+            occurredAt: command.requestedAt,
+            commandId: command.commandId,
+          })),
+          type: "agent_run.cancellation-requested",
+          payload: {
+            missionId: mission.id,
+            taskId: task.id,
+            agentRunId: activeRun.id,
+            occurredAt: command.requestedAt,
+          },
+        });
+      }
+      return events;
+    }
+
+    case "mission.scheduler.start":
+    case "mission.scheduler.pause":
+    case "mission.scheduler.resume": {
+      const mission = yield* requireMission({ readModel, command, missionId: command.missionId });
+      if (
+        mission.status === "completed" ||
+        mission.status === "cancelled" ||
+        mission.status === "failed"
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Mission '${mission.id}' is terminal and its scheduler cannot change.`,
+        });
+      }
+      const status = command.type === "mission.scheduler.pause" ? "paused" : "running";
+      if (mission.schedulerStatus === status) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Mission scheduler is already '${status}'.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: mission.id,
+          occurredAt: command.requestedAt,
+          commandId: command.commandId,
+        })),
+        type:
+          command.type === "mission.scheduler.start"
+            ? "scheduler.started"
+            : command.type === "mission.scheduler.pause"
+              ? "scheduler.paused"
+              : "scheduler.resumed",
+        payload: { missionId: mission.id, status, occurredAt: command.requestedAt },
+      };
+    }
+
+    case "mission.integration.request":
+    case "mission.integration.approve": {
+      const mission = yield* requireMission({ readModel, command, missionId: command.missionId });
+      const task = yield* requireMissionTask({
+        readModel,
+        command,
+        missionId: mission.id,
+        taskId: command.taskId,
+      });
+      const worktree = findManagedWorktreeById(readModel, command.worktreeId);
+      if (worktree?.missionId !== mission.id || worktree.taskId !== task.id) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Worktree '${command.worktreeId}' does not belong to task '${task.id}'.`,
+        });
+      }
+      if (task.status !== "completed") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Task '${task.id}' must complete before integration.`,
+        });
+      }
+      if (task.integrationStatus === "integrated") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Task '${task.id}' is already integrated.`,
+        });
+      }
+      if (command.type === "mission.integration.approve" && task.integrationStatus !== "pending") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Task '${task.id}' has no pending integration request to approve.`,
+        });
+      }
+      const policyApproved =
+        command.type === "mission.integration.request" &&
+        mission.teamSettings.integrationMode !== "manual";
+      const approved = command.type === "mission.integration.approve" || policyApproved;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: mission.id,
+          occurredAt: command.requestedAt,
+          commandId: command.commandId,
+        })),
+        type: approved ? "integration.approved" : "integration.requested",
+        payload: {
+          missionId: mission.id,
+          taskId: task.id,
+          worktreeId: worktree.id,
+          integrationStatus: approved ? "ready" : "pending",
+          occurredAt: command.requestedAt,
+        },
+      };
+    }
+
+    case "mission.integration.abort": {
+      const mission = yield* requireMission({ readModel, command, missionId: command.missionId });
+      const task = yield* requireMissionTask({
+        readModel,
+        command,
+        missionId: mission.id,
+        taskId: command.taskId,
+      });
+      const worktree = findManagedWorktreeById(readModel, command.worktreeId);
+      if (worktree?.taskId !== task.id || task.integrationStatus === "integrated") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Task '${task.id}' has no abortable integration.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: mission.id,
+          occurredAt: command.requestedAt,
+          commandId: command.commandId,
+        })),
+        type: "integration.aborted",
+        payload: {
+          missionId: mission.id,
+          taskId: task.id,
+          worktreeId: worktree.id,
+          integrationStatus: "failed",
+          occurredAt: command.requestedAt,
+          errorSummary: command.reason,
+        },
+      };
+    }
+
+    case "mission.worktree.remove": {
+      const mission = yield* requireMission({ readModel, command, missionId: command.missionId });
+      const worktree = findManagedWorktreeById(readModel, command.worktreeId);
+      if (worktree?.missionId !== mission.id || worktree.status === "removed") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Managed worktree '${command.worktreeId}' is not removable for mission '${mission.id}'.`,
+        });
+      }
+      if (
+        listActiveAgentRuns(readModel, mission.id).some((run) => run.worktreeId === worktree.id)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Managed worktree '${worktree.id}' still has an active agent run.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: mission.id,
+          occurredAt: command.requestedAt,
+          commandId: command.commandId,
+        })),
+        type: "managed_worktree.removal-requested",
+        payload: {
+          missionId: mission.id,
+          worktreeId: worktree.id,
+          requestedAt: command.requestedAt,
+        },
+      };
+    }
+
     case "mission.cancel": {
       const mission = yield* requireMission({
         readModel,
         command,
         missionId: command.missionId,
       });
-      const run = findActiveAgentRun(readModel, command.missionId);
-      if (run === undefined || run.status === "cancelling") {
+      if (mission.status === "cancelled" || mission.status === "completed") {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
-          detail:
-            run === undefined
-              ? `Mission '${mission.id}' has no active agent run to cancel.`
-              : `Agent run '${run.id}' is already cancelling.`,
+          detail: `Mission '${mission.id}' is already '${mission.status}'.`,
         });
       }
-      yield* requireAgentRunTransition({ command, run, status: "cancelling" });
-      return [
+      const activeRuns = listActiveAgentRuns(readModel, command.missionId).filter(
+        (run) => run.status !== "cancelling",
+      );
+      for (const run of activeRuns) {
+        yield* requireAgentRunTransition({ command, run, status: "cancelling" });
+      }
+      yield* requireMissionTransition({ command, mission, status: "cancelled" });
+      const events: PlannedOrchestrationEvent[] = [
         {
           ...(yield* withEventBase({
             aggregateKind: "mission",
@@ -1547,11 +2307,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           type: "mission.cancellation-requested",
           payload: {
             missionId: command.missionId,
-            agentRunId: run.id,
+            agentRunId: activeRuns[0]?.id ?? null,
+            agentRunIds: activeRuns.map((run) => run.id),
             requestedAt: command.createdAt,
           },
         },
-        {
+      ];
+      for (const run of activeRuns) {
+        events.push({
           ...(yield* withEventBase({
             aggregateKind: "mission",
             aggregateId: command.missionId,
@@ -1565,8 +2328,399 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             agentRunId: run.id,
             occurredAt: command.createdAt,
           },
+        });
+      }
+      const activeTaskIds = new Set(
+        activeRuns.flatMap((run) => (run.taskId === null ? [] : [run.taskId])),
+      );
+      for (const task of (readModel.missionTasks ?? []).filter(
+        (entry) =>
+          entry.missionId === mission.id &&
+          !activeTaskIds.has(entry.id) &&
+          entry.status !== "completed" &&
+          entry.status !== "cancelled",
+      )) {
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "mission",
+            aggregateId: command.missionId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "task.updated",
+          payload: {
+            missionId: command.missionId,
+            taskId: task.id,
+            status: "cancelled",
+            updatedAt: command.createdAt,
+          },
+        });
+      }
+      events.push({
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: command.missionId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "mission.cancelled",
+        payload: {
+          missionId: command.missionId,
+          agentRunId: activeRuns[0]?.id ?? null,
+          cancelledAt: command.createdAt,
+        },
+      });
+      return events;
+    }
+
+    case "mission.worktree.record": {
+      const mission = yield* requireMission({ readModel, command, missionId: command.missionId });
+      const worktree = command.worktree;
+      if (worktree.missionId !== mission.id || worktree.projectId !== mission.projectId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Managed worktree '${worktree.id}' does not match mission '${mission.id}'.`,
+        });
+      }
+      if (
+        (worktree.purpose === "task" && worktree.taskId === null) ||
+        (worktree.purpose === "integration" && worktree.taskId !== null)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Task worktrees require a task; integration worktrees must not have one.",
+        });
+      }
+      if (worktree.taskId !== null) {
+        yield* requireMissionTask({
+          readModel,
+          command,
+          missionId: mission.id,
+          taskId: worktree.taskId,
+        });
+      }
+      const collision = (readModel.managedWorktrees ?? []).find(
+        (entry) =>
+          entry.status !== "removed" &&
+          (entry.id === worktree.id ||
+            entry.worktreePath === worktree.worktreePath ||
+            (entry.repositoryPath === worktree.repositoryPath &&
+              entry.branchName === worktree.branchName) ||
+            (worktree.taskId !== null && entry.taskId === worktree.taskId) ||
+            (worktree.purpose === "integration" &&
+              entry.missionId === mission.id &&
+              entry.purpose === "integration")),
+      );
+      if (collision !== undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Managed worktree '${worktree.id}' collides with '${collision.id}'.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: mission.id,
+          occurredAt: worktree.updatedAt,
+          commandId: command.commandId,
+        })),
+        type: "managed_worktree.recorded",
+        payload: { worktree },
+      };
+    }
+
+    case "mission.worktree.status.update": {
+      const mission = yield* requireMission({ readModel, command, missionId: command.missionId });
+      const worktree = findManagedWorktreeById(readModel, command.worktreeId);
+      if (worktree?.missionId !== mission.id) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Managed worktree '${command.worktreeId}' does not belong to mission '${mission.id}'.`,
+        });
+      }
+      if (!canTransitionManagedWorktree(worktree.status, command.status)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Managed worktree '${worktree.id}' cannot transition from '${worktree.status}' to '${command.status}'.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: mission.id,
+          occurredAt: command.updatedAt,
+          commandId: command.commandId,
+        })),
+        type: "managed_worktree.status-updated",
+        payload: {
+          missionId: mission.id,
+          worktreeId: worktree.id,
+          status: command.status,
+          ...(command.headCommit !== undefined ? { headCommit: command.headCommit } : {}),
+          ...(command.changedFileCount !== undefined
+            ? { changedFileCount: command.changedFileCount }
+            : {}),
+          ...(command.hasUncommittedChanges !== undefined
+            ? { hasUncommittedChanges: command.hasUncommittedChanges }
+            : {}),
+          ...(command.conflictingFiles !== undefined
+            ? { conflictingFiles: command.conflictingFiles }
+            : {}),
+          ...(command.errorSummary !== undefined ? { errorSummary: command.errorSummary } : {}),
+          ...(command.removedAt !== undefined ? { removedAt: command.removedAt } : {}),
+          updatedAt: command.updatedAt,
+        },
+      };
+    }
+
+    case "mission.handoff.create": {
+      const mission = yield* requireMission({ readModel, command, missionId: command.missionId });
+      const handoff = command.handoff;
+      if (handoff.missionId !== mission.id) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Handoff '${handoff.id}' has the wrong mission id.`,
+        });
+      }
+      const task = yield* requireMissionTask({
+        readModel,
+        command,
+        missionId: mission.id,
+        taskId: handoff.taskId,
+      });
+      const run = yield* requireAgentRun({
+        readModel,
+        command,
+        missionId: mission.id,
+        agentRunId: handoff.agentRunId,
+      });
+      if (
+        run.taskId !== task.id ||
+        run.missionAgentId !== handoff.fromMissionAgentId ||
+        (readModel.agentHandoffs ?? []).some((entry) => entry.id === handoff.id)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Handoff '${handoff.id}' does not match its task/run or already exists.`,
+        });
+      }
+      if (
+        handoff.toMissionAgentId !== null &&
+        findMissionAgentById(readModel, handoff.toMissionAgentId)?.missionId !== mission.id
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Handoff target '${handoff.toMissionAgentId}' is not a member of this mission.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: mission.id,
+          occurredAt: handoff.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "agent_handoff.created",
+        payload: { handoff },
+      };
+    }
+
+    case "mission.handoff.reconcile": {
+      const mission = yield* requireMission({ readModel, command, missionId: command.missionId });
+      const handoff = findAgentHandoffById(readModel, command.handoffId);
+      if (handoff?.missionId !== mission.id || handoff.reconciliationStatus !== "pending") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Handoff '${command.handoffId}' is missing or already reconciled.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: mission.id,
+          occurredAt: command.reconciledAt,
+          commandId: command.commandId,
+        })),
+        type: "agent_handoff.reconciled",
+        payload: {
+          missionId: mission.id,
+          handoffId: handoff.id,
+          reconciliationStatus: command.reconciliationStatus,
+          changedFiles: command.changedFiles,
+          reconciledAt: command.reconciledAt,
+        },
+      };
+    }
+
+    case "mission.task.mark-ready":
+    case "mission.task.mark-blocked": {
+      const mission = yield* requireMission({ readModel, command, missionId: command.missionId });
+      const task = yield* requireMissionTask({
+        readModel,
+        command,
+        missionId: mission.id,
+        taskId: command.taskId,
+      });
+      const nextStatus = command.type === "mission.task.mark-ready" ? "ready" : "blocked";
+      yield* requireMissionTaskTransition({ command, task, status: nextStatus });
+      const occurredAt =
+        command.type === "mission.task.mark-ready" ? command.readyAt : command.blockedAt;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: mission.id,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: command.type === "mission.task.mark-ready" ? "task.ready" : "task.blocked",
+        payload:
+          command.type === "mission.task.mark-ready"
+            ? { missionId: mission.id, taskId: task.id, readyAt: command.readyAt }
+            : {
+                missionId: mission.id,
+                taskId: task.id,
+                reason: command.reason,
+                blockedAt: command.blockedAt,
+              },
+      };
+    }
+
+    case "mission.scheduler.concurrency-limit": {
+      const mission = yield* requireMission({ readModel, command, missionId: command.missionId });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "mission",
+          aggregateId: mission.id,
+          occurredAt: command.observedAt,
+          commandId: command.commandId,
+        })),
+        type: "scheduler.concurrency-limited",
+        payload: {
+          missionId: mission.id,
+          maximumConcurrentAgents: command.maximumConcurrentAgents,
+          maximumConcurrentWriteAgents: command.maximumConcurrentWriteAgents,
+          observedAt: command.observedAt,
+        },
+      };
+    }
+
+    case "mission.integration.start":
+    case "mission.integration.complete":
+    case "mission.integration.conflict":
+    case "mission.integration.fail": {
+      const mission = yield* requireMission({ readModel, command, missionId: command.missionId });
+      const task = yield* requireMissionTask({
+        readModel,
+        command,
+        missionId: mission.id,
+        taskId: command.taskId,
+      });
+      const worktree = findManagedWorktreeById(readModel, command.worktreeId);
+      if (worktree?.missionId !== mission.id || worktree.taskId !== task.id) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Integration worktree '${command.worktreeId}' does not match task '${task.id}'.`,
+        });
+      }
+      if (command.type === "mission.integration.start") {
+        if (task.integrationStatus !== "ready") {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Task '${task.id}' integration has not been approved.`,
+          });
+        }
+        const dependencies = (readModel.taskDependencies ?? []).filter(
+          (dependency) => dependency.missionId === mission.id && dependency.taskId === task.id,
+        );
+        const taskById = new Map(
+          (readModel.missionTasks ?? [])
+            .filter((entry) => entry.missionId === mission.id)
+            .map((entry) => [entry.id, entry] as const),
+        );
+        if (
+          dependencies.some(
+            (dependency) =>
+              taskById.get(dependency.dependsOnTaskId)?.integrationStatus !== "integrated",
+          )
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Task '${task.id}' must integrate after all dependencies.`,
+          });
+        }
+      } else if (task.integrationStatus !== "integrating") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Task '${task.id}' has no integration in progress.`,
+        });
+      }
+      const integrationStatus =
+        command.type === "mission.integration.start"
+          ? "integrating"
+          : command.type === "mission.integration.complete"
+            ? "integrated"
+            : command.type === "mission.integration.conflict"
+              ? "conflicted"
+              : "failed";
+      const type =
+        command.type === "mission.integration.start"
+          ? "integration.started"
+          : command.type === "mission.integration.complete"
+            ? "integration.completed"
+            : command.type === "mission.integration.conflict"
+              ? "integration.conflicted"
+              : "integration.failed";
+      const events: PlannedOrchestrationEvent[] = [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "mission",
+            aggregateId: mission.id,
+            occurredAt: command.occurredAt,
+            commandId: command.commandId,
+          })),
+          type,
+          payload: {
+            missionId: mission.id,
+            taskId: task.id,
+            worktreeId: worktree.id,
+            integrationStatus,
+            occurredAt: command.occurredAt,
+            ...(command.type === "mission.integration.complete"
+              ? { headCommit: command.headCommit }
+              : {}),
+            ...(command.type === "mission.integration.conflict"
+              ? { conflictingFiles: command.conflictingFiles }
+              : {}),
+            ...(command.type === "mission.integration.fail"
+              ? { errorSummary: command.errorSummary }
+              : {}),
+          },
         },
       ];
+      if (
+        command.type === "mission.integration.complete" ||
+        command.type === "mission.integration.conflict"
+      ) {
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "mission",
+            aggregateId: mission.id,
+            occurredAt: command.occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "managed_worktree.status-updated",
+          payload: {
+            missionId: mission.id,
+            worktreeId: worktree.id,
+            status: command.type === "mission.integration.complete" ? "integrated" : "conflicted",
+            ...(command.type === "mission.integration.complete"
+              ? { headCommit: command.headCommit }
+              : { conflictingFiles: command.conflictingFiles }),
+            updatedAt: command.occurredAt,
+          },
+        });
+      }
+      return events;
     }
 
     case "mission.agent-run.mark-running": {
@@ -1619,12 +2773,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       const allTasksComplete = (readModel.missionTasks ?? [])
         .filter((entry) => entry.missionId === mission.id)
         .every((entry) => entry.id === task?.id || entry.status === "completed");
-      const completesMission = task === undefined || allTasksComplete;
-      yield* requireMissionTransition({
-        command,
-        mission,
-        status: completesMission ? "completed" : "ready",
-      });
+      const otherActiveRuns = listActiveAgentRuns(readModel, mission.id).filter(
+        (entry) => entry.id !== run.id,
+      );
+      const completesMission =
+        task === undefined || (allTasksComplete && otherActiveRuns.length === 0);
+      const nextMissionStatus = completesMission ? "completed" : "running";
+      yield* requireMissionTransition({ command, mission, status: nextMissionStatus });
       const events: PlannedOrchestrationEvent[] = [
         {
           ...(yield* withEventBase({
@@ -1658,6 +2813,23 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             occurredAt: command.completedAt,
           },
         });
+        if (run.writeCapable && run.worktreeId !== null) {
+          events.push({
+            ...(yield* withEventBase({
+              aggregateKind: "mission",
+              aggregateId: mission.id,
+              occurredAt: command.completedAt,
+              commandId: command.commandId,
+            })),
+            type: "managed_worktree.status-updated",
+            payload: {
+              missionId: mission.id,
+              worktreeId: run.worktreeId,
+              status: "integration_ready",
+              updatedAt: command.completedAt,
+            },
+          });
+        }
       }
       events.push({
         ...(yield* withEventBase({
@@ -1679,7 +2851,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
               type: "mission.updated" as const,
               payload: {
                 missionId: mission.id,
-                status: "ready" as const,
+                status: "running" as const,
                 updatedAt: command.completedAt,
               },
             }),
@@ -1696,7 +2868,17 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         agentRunId: command.agentRunId,
       });
       yield* requireAgentRunTransition({ command, run, status: "failed" });
-      yield* requireMissionTransition({ command, mission, status: "failed" });
+      const isLegacySingleAgentRun = run.missionAgentId === null;
+      const preservesCancelledMission = mission.status === "cancelled";
+      yield* requireMissionTransition({
+        command,
+        mission,
+        status: preservesCancelledMission
+          ? "cancelled"
+          : isLegacySingleAgentRun
+            ? "failed"
+            : "running",
+      });
       const events: PlannedOrchestrationEvent[] = [
         {
           ...(yield* withEventBase({
@@ -1747,13 +2929,33 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           occurredAt: command.failedAt,
           commandId: command.commandId,
         })),
-        type: "mission.failed",
-        payload: {
-          missionId: mission.id,
-          agentRunId: run.id,
-          errorSummary: command.errorSummary,
-          failedAt: command.failedAt,
-        },
+        ...(preservesCancelledMission
+          ? {
+              type: "mission.updated" as const,
+              payload: {
+                missionId: mission.id,
+                status: "cancelled" as const,
+                updatedAt: command.failedAt,
+              },
+            }
+          : isLegacySingleAgentRun
+            ? {
+                type: "mission.failed" as const,
+                payload: {
+                  missionId: mission.id,
+                  agentRunId: run.id,
+                  errorSummary: command.errorSummary,
+                  failedAt: command.failedAt,
+                },
+              }
+            : {
+                type: "mission.updated" as const,
+                payload: {
+                  missionId: mission.id,
+                  status: "running" as const,
+                  updatedAt: command.failedAt,
+                },
+              }),
       });
       return events;
     }
@@ -1767,7 +2969,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         agentRunId: command.agentRunId,
       });
       yield* requireAgentRunTransition({ command, run, status: "cancelled" });
-      yield* requireMissionTransition({ command, mission, status: "cancelled" });
       const events: PlannedOrchestrationEvent[] = [
         {
           ...(yield* withEventBase({
@@ -1809,16 +3010,19 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           },
         });
       }
-      events.push({
-        ...(yield* withEventBase({
-          aggregateKind: "mission",
-          aggregateId: mission.id,
-          occurredAt: command.cancelledAt,
-          commandId: command.commandId,
-        })),
-        type: "mission.cancelled",
-        payload: { missionId: mission.id, agentRunId: run.id, cancelledAt: command.cancelledAt },
-      });
+      if (mission.status !== "cancelled" && run.missionAgentId === null) {
+        yield* requireMissionTransition({ command, mission, status: "cancelled" });
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "mission",
+            aggregateId: mission.id,
+            occurredAt: command.cancelledAt,
+            commandId: command.commandId,
+          })),
+          type: "mission.cancelled",
+          payload: { missionId: mission.id, agentRunId: run.id, cancelledAt: command.cancelledAt },
+        });
+      }
       return events;
     }
 
@@ -1831,7 +3035,17 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         agentRunId: command.agentRunId,
       });
       yield* requireAgentRunTransition({ command, run, status: "interrupted" });
-      yield* requireMissionTransition({ command, mission, status: "blocked" });
+      const isLegacySingleAgentRun = run.missionAgentId === null;
+      const preservesCancelledMission = mission.status === "cancelled";
+      yield* requireMissionTransition({
+        command,
+        mission,
+        status: preservesCancelledMission
+          ? "cancelled"
+          : isLegacySingleAgentRun
+            ? "blocked"
+            : "running",
+      });
       const events: PlannedOrchestrationEvent[] = [
         {
           ...(yield* withEventBase({
@@ -1858,6 +3072,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           taskId: run.taskId,
         });
         if (task.status === "running") {
+          const recoveredTaskStatus = preservesCancelledMission ? "cancelled" : "blocked";
+          yield* requireMissionTaskTransition({
+            command,
+            task,
+            status: recoveredTaskStatus,
+          });
           events.push({
             ...(yield* withEventBase({
               aggregateKind: "mission",
@@ -1869,7 +3089,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             payload: {
               missionId: mission.id,
               taskId: task.id,
-              status: "blocked",
+              status: recoveredTaskStatus,
               updatedAt: command.interruptedAt,
             },
           });
@@ -1882,13 +3102,33 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           occurredAt: command.interruptedAt,
           commandId: command.commandId,
         })),
-        type: "mission.recovery-blocked",
-        payload: {
-          missionId: mission.id,
-          agentRunId: run.id,
-          reason: command.reason,
-          recoveredAt: command.interruptedAt,
-        },
+        ...(preservesCancelledMission
+          ? {
+              type: "mission.updated" as const,
+              payload: {
+                missionId: mission.id,
+                status: "cancelled" as const,
+                updatedAt: command.interruptedAt,
+              },
+            }
+          : isLegacySingleAgentRun
+            ? {
+                type: "mission.recovery-blocked" as const,
+                payload: {
+                  missionId: mission.id,
+                  agentRunId: run.id,
+                  reason: command.reason,
+                  recoveredAt: command.interruptedAt,
+                },
+              }
+            : {
+                type: "mission.updated" as const,
+                payload: {
+                  missionId: mission.id,
+                  status: "running" as const,
+                  updatedAt: command.interruptedAt,
+                },
+              }),
       });
       return events;
     }

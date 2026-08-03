@@ -1,5 +1,8 @@
 import type {
   AgentRunId,
+  AgentHandoffId,
+  ManagedWorktreeId,
+  MissionAgentId,
   MissionId,
   MissionTaskId,
   OrchestrationEvent,
@@ -39,6 +42,11 @@ import {
   ThreadTurnDiffCompletedPayload,
   AgentRunLifecyclePayload,
   AgentRunStartedPayload,
+  AgentHandoffCreatedPayload,
+  AgentHandoffReconciledPayload,
+  ManagedWorktreeRecordedPayload,
+  ManagedWorktreeRemovalRequestedPayload,
+  ManagedWorktreeStatusUpdatedPayload,
   MissionCancelledPayload,
   MissionCancellationRequestedPayload,
   MissionCompletedPayload,
@@ -46,9 +54,22 @@ import {
   MissionFailedPayload,
   MissionRecoveryBlockedPayload,
   MissionStartedPayload,
+  MissionAgentPermissionsUpdatedPayload,
+  MissionAgentRemovedPayload,
+  MissionAgentUpsertedPayload,
+  MissionIntegrationLifecyclePayload,
+  MissionSchedulerConcurrencyLimitedPayload,
+  MissionSchedulerLifecyclePayload,
+  MissionTaskBlockedPayload,
   MissionTaskCreatedPayload,
   MissionTaskLifecyclePayload,
+  MissionTaskCancellationRequestedPayload,
+  MissionTaskDependencyAddedPayload,
+  MissionTaskDependencyRemovedPayload,
+  MissionTaskReadyPayload,
+  MissionTaskRetryRequestedPayload,
   MissionTaskUpdatedPayload,
+  MissionTeamConfiguredPayload,
   MissionUpdatedPayload,
 } from "./Schemas.ts";
 
@@ -115,6 +136,32 @@ function updateAgentRun(
   patch: Partial<NonNullable<OrchestrationReadModel["agentRuns"]>[number]>,
 ) {
   return runs.map((run) => (run.id === agentRunId ? { ...run, ...patch } : run));
+}
+
+function updateMissionAgent(
+  agents: NonNullable<OrchestrationReadModel["missionAgents"]>,
+  missionAgentId: MissionAgentId,
+  patch: Partial<NonNullable<OrchestrationReadModel["missionAgents"]>[number]>,
+) {
+  return agents.map((agent) => (agent.id === missionAgentId ? { ...agent, ...patch } : agent));
+}
+
+function updateManagedWorktree(
+  worktrees: NonNullable<OrchestrationReadModel["managedWorktrees"]>,
+  worktreeId: ManagedWorktreeId,
+  patch: Partial<NonNullable<OrchestrationReadModel["managedWorktrees"]>[number]>,
+) {
+  return worktrees.map((worktree) =>
+    worktree.id === worktreeId ? { ...worktree, ...patch } : worktree,
+  );
+}
+
+function updateAgentHandoff(
+  handoffs: NonNullable<OrchestrationReadModel["agentHandoffs"]>,
+  handoffId: AgentHandoffId,
+  patch: Partial<NonNullable<OrchestrationReadModel["agentHandoffs"]>[number]>,
+) {
+  return handoffs.map((handoff) => (handoff.id === handoffId ? { ...handoff, ...patch } : handoff));
 }
 
 function decodeForEvent<A>(
@@ -234,6 +281,11 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
     missions: [],
     missionTasks: [],
     agentRuns: [],
+    agentRoles: [],
+    missionAgents: [],
+    taskDependencies: [],
+    managedWorktrees: [],
+    agentHandoffs: [],
     updatedAt: nowIso,
   };
 }
@@ -249,6 +301,11 @@ export function projectEvent(
     missions: model.missions ?? [],
     missionTasks: model.missionTasks ?? [],
     agentRuns: model.agentRuns ?? [],
+    agentRoles: model.agentRoles ?? [],
+    missionAgents: model.missionAgents ?? [],
+    taskDependencies: model.taskDependencies ?? [],
+    managedWorktrees: model.managedWorktrees ?? [],
+    agentHandoffs: model.agentHandoffs ?? [],
   } satisfies OrchestrationReadModel;
 
   switch (event.type) {
@@ -927,6 +984,15 @@ export function projectEvent(
             ...(payload.description !== undefined ? { description: payload.description } : {}),
             ...(payload.status !== undefined ? { status: payload.status } : {}),
             ...(payload.position !== undefined ? { position: payload.position } : {}),
+            ...(payload.assignedMissionAgentId !== undefined
+              ? { assignedMissionAgentId: payload.assignedMissionAgentId }
+              : {}),
+            ...(payload.maximumAttempts !== undefined
+              ? { maximumAttempts: payload.maximumAttempts }
+              : {}),
+            ...(payload.requiresDependencyHandoffs !== undefined
+              ? { requiresDependencyHandoffs: payload.requiresDependencyHandoffs }
+              : {}),
             updatedAt: payload.updatedAt,
           }),
         })),
@@ -955,6 +1021,273 @@ export function projectEvent(
         })),
       );
 
+    case "mission.team-configured":
+      return decodeForEvent(
+        MissionTeamConfiguredPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          missions: updateMission(nextBase.missions, payload.missionId, {
+            teamSettings: payload.settings,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "mission.agent-upserted":
+      return decodeForEvent(MissionAgentUpsertedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          missionAgents: nextBase.missionAgents.some((agent) => agent.id === payload.agent.id)
+            ? updateMissionAgent(nextBase.missionAgents, payload.agent.id, payload.agent)
+            : [...nextBase.missionAgents, payload.agent],
+        })),
+      );
+
+    case "mission.agent-removed":
+      return decodeForEvent(MissionAgentRemovedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          missionAgents: nextBase.missionAgents.filter(
+            (agent) => agent.id !== payload.missionAgentId,
+          ),
+        })),
+      );
+
+    case "mission.agent-permissions-updated":
+      return decodeForEvent(
+        MissionAgentPermissionsUpdatedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          missionAgents: updateMissionAgent(nextBase.missionAgents, payload.missionAgentId, {
+            permissions: payload.permissions,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "task.dependency-added":
+      return decodeForEvent(
+        MissionTaskDependencyAddedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          taskDependencies: nextBase.taskDependencies.some(
+            (dependency) => dependency.id === payload.dependency.id,
+          )
+            ? nextBase.taskDependencies.map((dependency) =>
+                dependency.id === payload.dependency.id ? payload.dependency : dependency,
+              )
+            : [...nextBase.taskDependencies, payload.dependency],
+        })),
+      );
+
+    case "task.dependency-removed":
+      return decodeForEvent(
+        MissionTaskDependencyRemovedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          taskDependencies: nextBase.taskDependencies.filter(
+            (dependency) => dependency.id !== payload.dependencyId,
+          ),
+        })),
+      );
+
+    case "task.ready":
+      return decodeForEvent(MissionTaskReadyPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          missionTasks: updateMissionTask(nextBase.missionTasks, payload.taskId, {
+            status: "ready",
+            readyAt: payload.readyAt,
+            blockedReason: null,
+            completedAt: null,
+            updatedAt: payload.readyAt,
+          }),
+        })),
+      );
+
+    case "task.blocked":
+      return decodeForEvent(MissionTaskBlockedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          missionTasks: updateMissionTask(nextBase.missionTasks, payload.taskId, {
+            status: "blocked",
+            blockedReason: payload.reason,
+            updatedAt: payload.blockedAt,
+          }),
+        })),
+      );
+
+    case "task.retry-requested":
+      return decodeForEvent(
+        MissionTaskRetryRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(Effect.as(nextBase));
+
+    case "task.cancellation-requested":
+      return decodeForEvent(
+        MissionTaskCancellationRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(Effect.as(nextBase));
+
+    case "managed_worktree.recorded":
+      return decodeForEvent(
+        ManagedWorktreeRecordedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          managedWorktrees: nextBase.managedWorktrees.some(
+            (worktree) => worktree.id === payload.worktree.id,
+          )
+            ? updateManagedWorktree(
+                nextBase.managedWorktrees,
+                payload.worktree.id,
+                payload.worktree,
+              )
+            : [...nextBase.managedWorktrees, payload.worktree],
+          ...(payload.worktree.taskId !== null
+            ? {
+                missionTasks: updateMissionTask(nextBase.missionTasks, payload.worktree.taskId, {
+                  worktreeId: payload.worktree.id,
+                }),
+              }
+            : {}),
+        })),
+      );
+
+    case "managed_worktree.status-updated":
+      return decodeForEvent(
+        ManagedWorktreeStatusUpdatedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          managedWorktrees: updateManagedWorktree(nextBase.managedWorktrees, payload.worktreeId, {
+            status: payload.status,
+            ...(payload.headCommit !== undefined ? { headCommit: payload.headCommit } : {}),
+            ...(payload.changedFileCount !== undefined
+              ? { changedFileCount: payload.changedFileCount }
+              : {}),
+            ...(payload.hasUncommittedChanges !== undefined
+              ? { hasUncommittedChanges: payload.hasUncommittedChanges }
+              : {}),
+            ...(payload.conflictingFiles !== undefined
+              ? { conflictingFiles: payload.conflictingFiles }
+              : {}),
+            ...(payload.errorSummary !== undefined ? { errorSummary: payload.errorSummary } : {}),
+            ...(payload.removedAt !== undefined ? { removedAt: payload.removedAt } : {}),
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "managed_worktree.removal-requested":
+      return decodeForEvent(
+        ManagedWorktreeRemovalRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(Effect.as(nextBase));
+
+    case "agent_handoff.created":
+      return decodeForEvent(AgentHandoffCreatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          agentHandoffs: nextBase.agentHandoffs.some((handoff) => handoff.id === payload.handoff.id)
+            ? updateAgentHandoff(nextBase.agentHandoffs, payload.handoff.id, payload.handoff)
+            : [...nextBase.agentHandoffs, payload.handoff],
+        })),
+      );
+
+    case "agent_handoff.reconciled":
+      return decodeForEvent(
+        AgentHandoffReconciledPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          agentHandoffs: updateAgentHandoff(nextBase.agentHandoffs, payload.handoffId, {
+            reconciliationStatus: payload.reconciliationStatus,
+            changedFiles: payload.changedFiles,
+            reconciledAt: payload.reconciledAt,
+          }),
+        })),
+      );
+
+    case "scheduler.started":
+    case "scheduler.paused":
+    case "scheduler.resumed":
+      return decodeForEvent(
+        MissionSchedulerLifecyclePayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          missions: updateMission(nextBase.missions, payload.missionId, {
+            schedulerStatus: payload.status,
+            updatedAt: payload.occurredAt,
+          }),
+        })),
+      );
+
+    case "scheduler.concurrency-limited":
+      return decodeForEvent(
+        MissionSchedulerConcurrencyLimitedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(Effect.as(nextBase));
+
+    case "integration.requested":
+    case "integration.approved":
+    case "integration.started":
+    case "integration.completed":
+    case "integration.conflicted":
+    case "integration.aborted":
+    case "integration.failed":
+      return decodeForEvent(
+        MissionIntegrationLifecyclePayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          missionTasks: updateMissionTask(nextBase.missionTasks, payload.taskId, {
+            integrationStatus: payload.integrationStatus,
+            updatedAt: payload.occurredAt,
+          }),
+        })),
+      );
+
     case "agent_run.started":
       return decodeForEvent(AgentRunStartedPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => ({
@@ -962,6 +1295,24 @@ export function projectEvent(
           agentRuns: nextBase.agentRuns.some((run) => run.id === payload.run.id)
             ? updateAgentRun(nextBase.agentRuns, payload.run.id, payload.run)
             : [...nextBase.agentRuns, payload.run],
+          ...(payload.run.missionAgentId !== null
+            ? {
+                missionAgents: updateMissionAgent(
+                  nextBase.missionAgents,
+                  payload.run.missionAgentId,
+                  { status: "running", updatedAt: payload.run.updatedAt },
+                ),
+              }
+            : {}),
+          ...(payload.run.taskId !== null
+            ? {
+                missionTasks: updateMissionTask(nextBase.missionTasks, payload.run.taskId, {
+                  attemptCount: payload.run.attemptNumber,
+                  assignedMissionAgentId: payload.run.missionAgentId,
+                  worktreeId: payload.run.worktreeId,
+                }),
+              }
+            : {}),
         })),
       );
 
@@ -973,6 +1324,7 @@ export function projectEvent(
     case "agent_run.interrupted":
       return decodeForEvent(AgentRunLifecyclePayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => {
+          const run = nextBase.agentRuns.find((candidate) => candidate.id === payload.agentRunId);
           const status =
             event.type === "agent_run.running"
               ? "running"
@@ -985,6 +1337,22 @@ export function projectEvent(
                     : event.type === "agent_run.failed"
                       ? "failed"
                       : "interrupted";
+          const isTerminal =
+            status === "completed" ||
+            status === "cancelled" ||
+            status === "failed" ||
+            status === "interrupted";
+          const hasOtherActiveRun =
+            run?.missionAgentId !== null &&
+            run?.missionAgentId !== undefined &&
+            nextBase.agentRuns.some(
+              (candidate) =>
+                candidate.id !== payload.agentRunId &&
+                candidate.missionAgentId === run.missionAgentId &&
+                (candidate.status === "starting" ||
+                  candidate.status === "running" ||
+                  candidate.status === "cancelling"),
+            );
           return {
             ...nextBase,
             agentRuns: updateAgentRun(nextBase.agentRuns, payload.agentRunId, {
@@ -993,14 +1361,17 @@ export function projectEvent(
               ...(payload.providerSessionId !== undefined
                 ? { providerSessionId: payload.providerSessionId }
                 : {}),
-              ...(status === "completed" ||
-              status === "cancelled" ||
-              status === "failed" ||
-              status === "interrupted"
-                ? { completedAt: payload.occurredAt }
-                : {}),
+              ...(isTerminal ? { completedAt: payload.occurredAt } : {}),
               ...(payload.errorSummary !== undefined ? { errorSummary: payload.errorSummary } : {}),
             }),
+            ...(run?.missionAgentId !== null && run?.missionAgentId !== undefined
+              ? {
+                  missionAgents: updateMissionAgent(nextBase.missionAgents, run.missionAgentId, {
+                    status: isTerminal && !hasOtherActiveRun ? "idle" : "running",
+                    updatedAt: payload.occurredAt,
+                  }),
+                }
+              : {}),
           };
         }),
       );

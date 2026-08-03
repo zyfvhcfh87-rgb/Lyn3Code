@@ -1,8 +1,13 @@
 import {
+  AgentRoleId,
   AgentRunId,
+  ALL_AGENT_PERMISSIONS,
   CommandId,
   EventId,
+  DEFAULT_MISSION_TEAM_SETTINGS,
+  ManagedWorktreeId,
   MissionId,
+  MissionAgentId,
   MissionTaskId,
   ProjectId,
   ProviderDriverKind,
@@ -18,6 +23,7 @@ import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
@@ -28,9 +34,11 @@ import {
 import { ProjectionAgentRunRepository } from "../../persistence/Services/ProjectionAgentRuns.ts";
 import { ProjectionMissionTaskRepository } from "../../persistence/Services/ProjectionMissionTasks.ts";
 import { ProjectionMissionRepository } from "../../persistence/Services/ProjectionMissions.ts";
+import { ProjectionMissionTeamRepository } from "../../persistence/Services/ProjectionMissionTeams.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { MissionGitService } from "../../mission-git/MissionGitService.ts";
 import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { MissionRunReactor } from "../Services/MissionRunReactor.ts";
@@ -42,6 +50,8 @@ const taskId = MissionTaskId.make("task-mission-reactor");
 const runId = AgentRunId.make("run-mission-reactor");
 const threadId = ThreadId.make("thread-mission-reactor");
 const providerInstanceId = ProviderInstanceId.make("codex");
+const missionAgentId = MissionAgentId.make("mission-reactor-implementer");
+const worktreeId = ManagedWorktreeId.make("mission-reactor-worktree");
 const now = "2026-08-03T00:00:00.000Z";
 
 type CommandType = OrchestrationCommand["type"];
@@ -193,8 +203,32 @@ const FakeServicesLive = Layer.mergeAll(FakeOrchestrationEngineLive, FakeProvide
   Layer.provideMerge(MissionRunHarnessLive),
 );
 
+const FakeMissionGitLive = Layer.succeed(
+  MissionGitService,
+  MissionGitService.of({
+    detectChangedFiles: () => Effect.succeed(["src/committed.ts", "src/implemented.ts"]),
+    inspectWorktreeStatus: () =>
+      Effect.succeed({
+        path: "/tmp/mission-reactor-worktrees/implementer",
+        exists: true,
+        registered: true,
+        branch: "agent/mission-reactor/implementer",
+        headCommit: "2222222222222222222222222222222222222222",
+        isDirty: true,
+        hasUntrackedFiles: false,
+        hasConflicts: false,
+        changedPaths: ["src/implemented.ts"],
+        conflictingFiles: [],
+        inProgressOperation: null,
+        commitsAheadOfIntegration: 1,
+        integrated: false,
+      }),
+  } as unknown as MissionGitService["Service"]),
+);
+
 const TestLayer = MissionRunReactorLive.pipe(
   Layer.provideMerge(FakeServicesLive),
+  Layer.provideMerge(FakeMissionGitLive),
   Layer.provideMerge(ProjectionProjectRepositoryLive),
   Layer.provideMerge(SqlitePersistenceMemory),
 );
@@ -213,6 +247,11 @@ const makeRun = (status: AgentRun["status"]): AgentRun => ({
   updatedAt: now,
   completedAt: null,
   errorSummary: null,
+  missionAgentId: null,
+  worktreeId: null,
+  attemptNumber: 1,
+  permissions: ALL_AGENT_PERMISSIONS,
+  writeCapable: true,
 });
 
 const seedRun = (status: AgentRun["status"]) =>
@@ -243,6 +282,8 @@ const seedRun = (status: AgentRun["status"]) =>
       startedAt: now,
       completedAt: null,
       cancelledAt: null,
+      teamSettings: DEFAULT_MISSION_TEAM_SETTINGS,
+      schedulerStatus: "idle",
     });
     yield* tasks.upsert({
       id: taskId,
@@ -255,8 +296,77 @@ const seedRun = (status: AgentRun["status"]) =>
       updatedAt: now,
       startedAt: now,
       completedAt: null,
+      assignedMissionAgentId: null,
+      worktreeId: null,
+      attemptCount: 1,
+      maximumAttempts: 3,
+      readyAt: null,
+      blockedReason: null,
+      integrationStatus: "not_requested",
+      requiresDependencyHandoffs: true,
     });
     const run = makeRun(status);
+    yield* runs.upsert(run);
+    return run;
+  });
+
+const seedPhaseTwoRun = (status: AgentRun["status"]) =>
+  Effect.gen(function* () {
+    const baseRun = yield* seedRun(status);
+    const tasks = yield* ProjectionMissionTaskRepository;
+    const runs = yield* ProjectionAgentRunRepository;
+    const teams = yield* ProjectionMissionTeamRepository;
+    yield* teams.upsertMissionAgent({
+      id: missionAgentId,
+      missionId,
+      roleId: AgentRoleId.make("built-in:implementer"),
+      roleKind: "implementer",
+      displayName: "Mission implementer",
+      providerInstanceId,
+      model: "gpt-5-codex",
+      reasoningLevel: "high",
+      permissions: ["read_files", "search_repository", "run_tests", "write_files"],
+      maximumConcurrentRuns: 1,
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    yield* teams.upsertManagedWorktree({
+      id: worktreeId,
+      projectId,
+      missionId,
+      taskId,
+      purpose: "task",
+      repositoryPath: "/tmp/mission-reactor",
+      worktreePath: "/tmp/mission-reactor-worktrees/implementer",
+      branchName: "agent/mission-reactor/implementer",
+      baseBranch: "main",
+      baseCommit: "1111111111111111111111111111111111111111",
+      headCommit: "1111111111111111111111111111111111111111",
+      status: "active",
+      changedFileCount: 0,
+      hasUncommittedChanges: false,
+      conflictingFiles: [],
+      createdAt: now,
+      updatedAt: now,
+      removedAt: null,
+      errorSummary: null,
+    });
+    const task = yield* tasks.getById({ taskId });
+    if (Option.isSome(task)) {
+      yield* tasks.upsert({
+        ...task.value,
+        assignedMissionAgentId: missionAgentId,
+        worktreeId,
+      });
+    }
+    const run = {
+      ...baseRun,
+      missionAgentId,
+      worktreeId,
+      permissions: ["read_files", "search_repository", "run_tests", "write_files"],
+      writeCapable: true,
+    } satisfies AgentRun;
     yield* runs.upsert(run);
     return run;
   });
@@ -294,6 +404,7 @@ const cancellationRequestedEvent = () =>
     payload: {
       missionId,
       agentRunId: runId,
+      agentRunIds: [runId],
       requestedAt: now,
     },
   }) satisfies Extract<OrchestrationEvent, { type: "mission.cancellation-requested" }>;
@@ -556,15 +667,16 @@ it.layer(TestLayer)("MissionRunReactor integration", (it) => {
         const run = yield* seedRun("starting");
 
         yield* harness.publish(runStartedEvent(run));
-        yield* harness.awaitCommand("thread.turn.start");
-        yield* runs.upsert({ ...run, status: "cancelling" });
+        const turnStart = yield* harness.awaitCommand("thread.turn.start");
+        yield* runs.upsert({ ...run, status: "cancelling", updatedAt: now });
 
         yield* harness.publish(cancellationRequestedEvent());
-        const interrupt = yield* harness.awaitCommand("thread.turn.interrupt");
-        const stop = yield* harness.awaitCommand("thread.session.stop");
+        const interruptIntent = yield* harness.awaitCommand("thread.turn.interrupt");
+        const stopIntent = yield* harness.awaitCommand("thread.session.stop");
 
-        assert.equal(interrupt.threadId, threadId);
-        assert.equal(stop.threadId, threadId);
+        assert.equal(turnStart.threadId, threadId);
+        assert.equal(interruptIntent.threadId, threadId);
+        assert.equal(stopIntent.threadId, threadId);
         assert.deepStrictEqual(harness.interruptedThreads(), []);
         assert.deepStrictEqual(harness.stoppedThreads(), []);
         assert.equal(
@@ -589,8 +701,15 @@ it.layer(TestLayer)("MissionRunReactor integration", (it) => {
           harness.commands().some((command) => command.type === "mission.agent-run.complete"),
           false,
         );
-        const commands = harness.commands();
-        assert.isBelow(commands.indexOf(interrupt), commands.indexOf(stop));
+        const orderedTypes = harness.commands().map((command) => command.type);
+        assert.isBelow(
+          orderedTypes.indexOf("thread.turn.start"),
+          orderedTypes.indexOf("thread.turn.interrupt"),
+        );
+        assert.isBelow(
+          orderedTypes.indexOf("thread.turn.interrupt"),
+          orderedTypes.indexOf("thread.session.stop"),
+        );
       }),
     ),
   );
@@ -613,6 +732,63 @@ it.layer(TestLayer)("MissionRunReactor integration", (it) => {
             .length,
           1,
         );
+      }),
+    ),
+  );
+
+  it.effect("launches a Phase 2 agent inside its assigned worktree with focused context", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const reactor = yield* MissionRunReactor;
+        const harness = yield* MissionRunHarness;
+        harness.reset();
+        yield* reactor.start();
+        const run = yield* seedPhaseTwoRun("starting");
+
+        yield* harness.publish(runStartedEvent(run));
+        const threadCreate = yield* harness.awaitCommand("thread.create");
+        const turnStart = yield* harness.awaitCommand("thread.turn.start");
+
+        assert.equal(threadCreate.worktreePath, "/tmp/mission-reactor-worktrees/implementer");
+        assert.equal(threadCreate.branch, "agent/mission-reactor/implementer");
+        assert.match(turnStart.message.text, /Role: Mission implementer \(implementer\)/);
+        assert.match(turnStart.message.text, /Permissions: read_files, search_repository/);
+        assert.match(turnStart.message.text, /Do not write outside it/);
+      }),
+    ),
+  );
+
+  it.effect("creates and Git-reconciles a structured handoff before terminal completion", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const reactor = yield* MissionRunReactor;
+        const harness = yield* MissionRunHarness;
+        harness.reset();
+        yield* reactor.start();
+        yield* seedPhaseTwoRun("running");
+
+        yield* harness.publishRuntime(providerTurnCompletedEvent("completed"));
+        const created = yield* harness.awaitCommand("mission.handoff.create");
+        const reconciled = yield* harness.awaitCommand("mission.handoff.reconcile");
+        const completed = yield* harness.awaitCommand("mission.agent-run.complete");
+
+        assert.equal(created.handoff.agentRunId, runId);
+        assert.equal(created.handoff.fromMissionAgentId, missionAgentId);
+        assert.deepStrictEqual(created.handoff.changedFiles, []);
+        assert.equal(reconciled.reconciliationStatus, "corrected");
+        assert.deepStrictEqual(reconciled.changedFiles, [
+          {
+            path: "src/committed.ts",
+            change: "modified",
+            summary: "Detected from the assigned worktree's Git diff or status.",
+          },
+          {
+            path: "src/implemented.ts",
+            change: "modified",
+            summary: "Detected from the assigned worktree's Git diff or status.",
+          },
+        ]);
+        assert.equal(completed.agentRunId, runId);
       }),
     ),
   );
