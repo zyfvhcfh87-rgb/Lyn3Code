@@ -1697,6 +1697,7 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: eventTurnId ?? null,
               lastError: runtimeErrorMessage,
+              runtimeErrorClass: event.payload.class,
               updatedAt: now,
             },
             createdAt: now,

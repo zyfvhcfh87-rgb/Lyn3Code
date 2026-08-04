@@ -11,6 +11,7 @@ import {
   OrchestrationEventMetadata,
   OrchestrationEventType,
   ProjectId,
+  RoutingAggregateId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -37,7 +38,7 @@ const EventMetadataFromJsonString = Schema.fromJsonString(OrchestrationEventMeta
 const AppendEventRequestSchema = Schema.Struct({
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  streamId: Schema.Union([ProjectId, ThreadId, MissionId, MemoryAggregateId]),
+  streamId: Schema.Union([ProjectId, ThreadId, MissionId, MemoryAggregateId, RoutingAggregateId]),
   type: OrchestrationEventType,
   causationEventId: Schema.NullOr(EventId),
   correlationId: Schema.NullOr(CommandId),
@@ -53,7 +54,13 @@ const OrchestrationEventPersistedRowSchema = Schema.Struct({
   eventId: EventId,
   type: OrchestrationEventType,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId, MissionId, MemoryAggregateId]),
+  aggregateId: Schema.Union([
+    ProjectId,
+    ThreadId,
+    MissionId,
+    MemoryAggregateId,
+    RoutingAggregateId,
+  ]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -68,7 +75,13 @@ const ReadFromSequenceRequestSchema = Schema.Struct({
 });
 const ReadForAggregateRequestSchema = Schema.Struct({
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId, MissionId, MemoryAggregateId]),
+  aggregateId: Schema.Union([
+    ProjectId,
+    ThreadId,
+    MissionId,
+    MemoryAggregateId,
+    RoutingAggregateId,
+  ]),
   sequenceExclusive: NonNegativeInt,
   limit: Schema.Number,
 });

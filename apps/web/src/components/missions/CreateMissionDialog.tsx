@@ -25,6 +25,11 @@ export interface CreateMissionProjectOption {
   readonly title: string;
 }
 
+export const missionProjectTitle = (
+  projects: ReadonlyArray<CreateMissionProjectOption>,
+  projectId: string,
+) => projects.find((project) => project.id === projectId)?.title;
+
 export function CreateMissionDialog({
   open,
   projects,
@@ -43,6 +48,7 @@ export function CreateMissionDialog({
   const [projectId, setProjectId] = useState(selectedProjectId ?? "");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const normalizedTitle = title.trim();
+  const selectedProjectTitle = missionProjectTitle(projects, projectId);
 
   const setOpen = (nextOpen: boolean) => {
     if (!nextOpen && !isSubmitting) {
@@ -91,7 +97,7 @@ export function CreateMissionDialog({
                 onValueChange={(value) => setProjectId(value ?? "")}
               >
                 <SelectTrigger aria-label="Mission project">
-                  <SelectValue placeholder="Choose a project" />
+                  <SelectValue placeholder="Choose a project">{selectedProjectTitle}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
                   {projects.map((project) => (

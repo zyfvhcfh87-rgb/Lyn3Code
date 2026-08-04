@@ -23,6 +23,7 @@ import {
   PositiveInt,
   ProjectId,
   ProviderItemId,
+  RoutingDecisionId,
   TaskDependencyId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -36,6 +37,7 @@ import {
   VerificationRunId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { RuntimeErrorClass } from "./providerRuntime.ts";
 import {
   AgentHandoff,
   AgentHandoffChangedFile,
@@ -83,6 +85,13 @@ import {
   MemoryEventReferencePayload,
   MemoryOrchestrationEventType,
 } from "./memory.ts";
+import {
+  ModelProfileId,
+  ProviderProfileId,
+  RoutingOverrideId,
+  RoutingReasoningLevel,
+  TaskRoutingAssessmentId,
+} from "./routing.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -342,6 +351,7 @@ export const OrchestrationSession = Schema.Struct({
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
+  runtimeErrorClass: Schema.optional(Schema.NullOr(RuntimeErrorClass)),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;
@@ -927,6 +937,8 @@ const MissionRunStartFields = {
   writeCapable: Schema.optional(Schema.Boolean),
   purpose: Schema.optional(AgentRunPurpose),
   repairAttemptId: Schema.optional(VerificationRepairAttemptId),
+  routingDecisionId: Schema.optional(RoutingDecisionId),
+  reasoningLevel: Schema.optional(RoutingReasoningLevel),
   createdAt: IsoDateTime,
 } as const;
 
@@ -1323,6 +1335,7 @@ export const MissionAgentRunFailCommand = Schema.Struct({
   missionId: MissionId,
   agentRunId: AgentRunId,
   errorSummary: TrimmedNonEmptyString,
+  runtimeErrorClass: Schema.optional(Schema.NullOr(RuntimeErrorClass)),
   failedAt: IsoDateTime,
 });
 
@@ -1657,6 +1670,74 @@ export const MemoryEventRecordCommand = Schema.Struct({
   payload: MemoryEventReferencePayload,
 });
 
+export const RoutingOrchestrationEventType = Schema.Literals([
+  "routing.provider_registered",
+  "routing.provider_updated",
+  "routing.provider_enabled",
+  "routing.provider_disabled",
+  "routing.provider_health_changed",
+  "routing.provider_rate_limited",
+  "routing.provider_authentication_failed",
+  "routing.model_discovered",
+  "routing.model_updated",
+  "routing.model_enabled",
+  "routing.model_disabled",
+  "routing.model_deprecated",
+  "routing.capability_snapshot_created",
+  "routing.policy_created",
+  "routing.policy_updated",
+  "routing.policy_disabled",
+  "routing.policy_conflict_detected",
+  "routing.assessment_created",
+  "routing.assessment_updated",
+  "routing.simulation_completed",
+  "routing.decision_requested",
+  "routing.decision_created",
+  "routing.decision_applied",
+  "routing.decision_failed",
+  "routing.decision_superseded",
+  "routing.manual_override_created",
+  "routing.manual_override_revoked",
+  "routing.fallback_started",
+  "routing.fallback_candidate_selected",
+  "routing.fallback_cancelled",
+  "routing.fallback_exhausted",
+  "routing.reroute_created",
+  "routing.context_reduction_applied",
+  "routing.context_incompatible",
+  "routing.no_eligible_candidate",
+]);
+export type RoutingOrchestrationEventType = typeof RoutingOrchestrationEventType.Type;
+
+/**
+ * Routing audit events intentionally carry references and a bounded summary,
+ * never prompts, source context, provider credentials, or full candidate sets.
+ */
+export const RoutingEventReferencePayload = Schema.Struct({
+  projectId: Schema.NullOr(ProjectId),
+  missionId: Schema.NullOr(MissionId),
+  taskId: Schema.NullOr(MissionTaskId),
+  routingDecisionId: Schema.NullOr(RoutingDecisionId),
+  assessmentId: Schema.NullOr(TaskRoutingAssessmentId),
+  providerProfileId: Schema.NullOr(ProviderProfileId),
+  modelProfileId: Schema.NullOr(ModelProfileId),
+  overrideId: Schema.NullOr(RoutingOverrideId),
+  summary: Schema.NullOr(Schema.String.check(Schema.isMaxLength(2_000))),
+  occurredAt: IsoDateTime,
+});
+export type RoutingEventReferencePayload = typeof RoutingEventReferencePayload.Type;
+
+export const RoutingAggregateId = TrimmedNonEmptyString.pipe(Schema.brand("RoutingAggregateId"));
+export type RoutingAggregateId = typeof RoutingAggregateId.Type;
+
+export const RoutingEventRecordCommand = Schema.Struct({
+  type: Schema.Literal("routing.event.record"),
+  commandId: CommandId,
+  aggregateId: RoutingAggregateId,
+  eventType: RoutingOrchestrationEventType,
+  payload: RoutingEventReferencePayload,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -1694,6 +1775,7 @@ const InternalOrchestrationCommand = Schema.Union([
   VerificationOverrideApplyCommand,
   GitHubEventRecordCommand,
   MemoryEventRecordCommand,
+  RoutingEventRecordCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -1882,6 +1964,41 @@ export const OrchestrationEventType = Schema.Literals([
   "memory.retrieval_completed",
   "memory.retrieval_failed",
   "memory.feedback_received",
+  "routing.provider_registered",
+  "routing.provider_updated",
+  "routing.provider_enabled",
+  "routing.provider_disabled",
+  "routing.provider_health_changed",
+  "routing.provider_rate_limited",
+  "routing.provider_authentication_failed",
+  "routing.model_discovered",
+  "routing.model_updated",
+  "routing.model_enabled",
+  "routing.model_disabled",
+  "routing.model_deprecated",
+  "routing.capability_snapshot_created",
+  "routing.policy_created",
+  "routing.policy_updated",
+  "routing.policy_disabled",
+  "routing.policy_conflict_detected",
+  "routing.assessment_created",
+  "routing.assessment_updated",
+  "routing.simulation_completed",
+  "routing.decision_requested",
+  "routing.decision_created",
+  "routing.decision_applied",
+  "routing.decision_failed",
+  "routing.decision_superseded",
+  "routing.manual_override_created",
+  "routing.manual_override_revoked",
+  "routing.fallback_started",
+  "routing.fallback_candidate_selected",
+  "routing.fallback_cancelled",
+  "routing.fallback_exhausted",
+  "routing.reroute_created",
+  "routing.context_reduction_applied",
+  "routing.context_incompatible",
+  "routing.no_eligible_candidate",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1890,6 +2007,7 @@ export const OrchestrationAggregateKind = Schema.Literals([
   "thread",
   "mission",
   "memory",
+  "routing",
 ]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
@@ -2198,6 +2316,7 @@ export const AgentRunLifecyclePayload = Schema.Struct({
   providerSessionId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   occurredAt: IsoDateTime,
   errorSummary: Schema.optional(TrimmedNonEmptyString),
+  runtimeErrorClass: Schema.optional(Schema.NullOr(RuntimeErrorClass)),
 });
 
 export const MissionTeamConfiguredPayload = Schema.Struct({
@@ -2457,7 +2576,13 @@ const EventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId, MissionId, MemoryAggregateId]),
+  aggregateId: Schema.Union([
+    ProjectId,
+    ThreadId,
+    MissionId,
+    MemoryAggregateId,
+    RoutingAggregateId,
+  ]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -3030,6 +3155,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: MemoryOrchestrationEventType,
     payload: MemoryEventReferencePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: RoutingOrchestrationEventType,
+    payload: RoutingEventReferencePayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;

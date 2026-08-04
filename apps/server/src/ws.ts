@@ -112,6 +112,7 @@ import * as VerificationQuery from "./verification/VerificationQueryService.ts";
 import * as GitHubWorkspace from "./github/GitHubWorkspaceService.ts";
 import * as GitHubWorkflow from "./github/GitHubWorkflowService.ts";
 import * as MemoryWorkspace from "./memory/MemoryWorkspaceService.ts";
+import * as RoutingCoordinator from "./routing/RoutingCoordinator.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -366,6 +367,7 @@ const makeWsRpcLayer = (
       const githubWorkspace = yield* GitHubWorkspace.GitHubWorkspaceService;
       const githubWorkflow = yield* GitHubWorkflow.GitHubWorkflowService;
       const memoryWorkspace = yield* MemoryWorkspace.MemoryWorkspaceService;
+      const routing = yield* RoutingCoordinator.RoutingCoordinator;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
@@ -2188,6 +2190,96 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "memory" },
           ),
+        [WS_METHODS.routingGetRegistry]: (_input) =>
+          observeRpcEffect(WS_METHODS.routingGetRegistry, routing.getRegistry(), {
+            "rpc.aggregate": "routing",
+          }),
+        [WS_METHODS.routingGetWorkspace]: (input) =>
+          observeRpcEffect(WS_METHODS.routingGetWorkspace, routing.getWorkspace(input), {
+            "rpc.aggregate": "routing",
+          }),
+        [WS_METHODS.routingGetDecision]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.routingGetDecision,
+            routing.getDecision(input.routingDecisionId),
+            { "rpc.aggregate": "routing" },
+          ),
+        [WS_METHODS.routingListHistory]: (input) =>
+          observeRpcEffect(WS_METHODS.routingListHistory, routing.listHistory(input), {
+            "rpc.aggregate": "routing",
+          }),
+        [WS_METHODS.routingSimulate]: (input) =>
+          observeRpcEffect(WS_METHODS.routingSimulate, routing.simulate(input), {
+            "rpc.aggregate": "routing",
+          }),
+        [WS_METHODS.routingStartMission]: (input) =>
+          observeRpcEffect(WS_METHODS.routingStartMission, routing.startMission(input), {
+            "rpc.aggregate": "routing",
+          }),
+        [WS_METHODS.routingSavePolicy]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.routingSavePolicy,
+            routing.savePolicy(input.policy).pipe(Effect.map((policy) => ({ policy }))),
+            { "rpc.aggregate": "routing" },
+          ),
+        [WS_METHODS.routingSaveRule]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.routingSaveRule,
+            routing.saveRule(input.rule).pipe(Effect.map((rule) => ({ rule }))),
+            { "rpc.aggregate": "routing" },
+          ),
+        [WS_METHODS.routingSaveOverride]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.routingSaveOverride,
+            routing.saveOverride(input.override).pipe(Effect.map((override) => ({ override }))),
+            { "rpc.aggregate": "routing" },
+          ),
+        [WS_METHODS.routingRevokeOverride]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.routingRevokeOverride,
+            routing
+              .revokeOverride(input.overrideId, input.revokedAt)
+              .pipe(Effect.map((override) => ({ override }))),
+            { "rpc.aggregate": "routing" },
+          ),
+        [WS_METHODS.routingSaveAssessment]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.routingSaveAssessment,
+            routing
+              .saveAssessment(input.assessment)
+              .pipe(Effect.map((assessment) => ({ assessment }))),
+            { "rpc.aggregate": "routing" },
+          ),
+        [WS_METHODS.routingSaveProviderProfile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.routingSaveProviderProfile,
+            routing
+              .saveProviderProfile(input.provider)
+              .pipe(Effect.map((provider) => ({ provider }))),
+            { "rpc.aggregate": "routing" },
+          ),
+        [WS_METHODS.routingSaveModelProfile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.routingSaveModelProfile,
+            routing.saveModelProfile(input.model).pipe(Effect.map((model) => ({ model }))),
+            { "rpc.aggregate": "routing" },
+          ),
+        [WS_METHODS.routingSaveCapabilitySnapshot]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.routingSaveCapabilitySnapshot,
+            routing
+              .saveCapabilitySnapshot(input.capabilitySnapshot)
+              .pipe(Effect.map((capabilitySnapshot) => ({ capabilitySnapshot }))),
+            { "rpc.aggregate": "routing" },
+          ),
+        [WS_METHODS.routingRefreshRegistry]: (input) =>
+          observeRpcEffect(WS_METHODS.routingRefreshRegistry, routing.refreshRegistry(input), {
+            "rpc.aggregate": "routing",
+          }),
+        [WS_METHODS.routingSubscribeWorkspace]: (input) =>
+          observeRpcStream(WS_METHODS.routingSubscribeWorkspace, routing.streamWorkspace(input), {
+            "rpc.aggregate": "routing",
+          }),
         [WS_METHODS.subscribeVcsStatus]: (input) =>
           observeRpcStream(
             WS_METHODS.subscribeVcsStatus,

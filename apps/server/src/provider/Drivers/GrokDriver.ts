@@ -79,6 +79,18 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
   metadata: {
     displayName: "Grok",
     supportsMultipleInstances: true,
+    endpointClass: "official_cloud",
+    executionLocality: "remote",
+    supportsModelDiscovery: true,
+    modelMetadataSource: "provider_reported",
+    harnessCapabilities: {
+      toolExecution: "supported",
+      codeEditing: "supported",
+      streaming: "supported",
+      structuredOutput: "unknown",
+      attachmentInput: "unknown",
+    },
+    concurrency: { maximumConcurrentSessions: null, source: "unknown" },
   },
   configSchema: GrokSettings,
   defaultConfig: (): GrokSettings => decodeGrokSettings({}),

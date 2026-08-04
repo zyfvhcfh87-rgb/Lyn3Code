@@ -62,6 +62,7 @@ import { ProjectionVerificationConfigurationRepositoryLive } from "./persistence
 import { ProjectionVerificationRunRepositoryLive } from "./persistence/Layers/ProjectionVerificationRuns.ts";
 import { ProjectionGitHubWorkspaceRepositoryLive } from "./persistence/Layers/ProjectionGitHubWorkspace.ts";
 import { ProjectionMemoryRepositoryLive } from "./persistence/Layers/ProjectionMemory.ts";
+import { ProjectionRoutingRepositoryLive } from "./persistence/Layers/ProjectionRouting.ts";
 import { ProjectionProjectRepositoryLive } from "./persistence/Layers/ProjectionProjects.ts";
 import { ProjectionAgentRunRepositoryLive } from "./persistence/Layers/ProjectionAgentRuns.ts";
 import { ProjectionMissionRepositoryLive } from "./persistence/Layers/ProjectionMissions.ts";
@@ -100,6 +101,9 @@ import {
   MemoryStalenessServiceLive,
 } from "./memory/MemoryStalenessService.ts";
 import * as MemoryWorkspace from "./memory/MemoryWorkspaceService.ts";
+import * as RoutingCoordinator from "./routing/RoutingCoordinator.ts";
+import * as RoutingEventRecorder from "./routing/RoutingEventRecorder.ts";
+import * as RoutingLifecycle from "./routing/RoutingLifecycle.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
@@ -409,6 +413,20 @@ const MemoryRuntimeLayerLive = Layer.empty.pipe(
   Layer.provideMerge(MemoryProposalExtractionRuntimeLayerLive),
 );
 
+const RoutingEventRecorderLayerLive = RoutingEventRecorder.layer.pipe(
+  Layer.provide(OrchestrationLayerLive),
+);
+const RoutingCoordinatorLayerLive = RoutingCoordinator.layer.pipe(
+  Layer.provideMerge(ProjectionRoutingRepositoryLive),
+  Layer.provideMerge(ProjectionAgentRunRepositoryLive),
+  Layer.provideMerge(OrchestrationLayerLive),
+  Layer.provideMerge(RoutingEventRecorderLayerLive),
+);
+const RoutingRuntimeLayerLive = RoutingLifecycle.layer.pipe(
+  Layer.provideMerge(RoutingCoordinatorLayerLive),
+  Layer.provideMerge(OrchestrationLayerLive),
+);
+
 const MissionRuntimeLayerLive = Layer.mergeAll(
   MissionRunReactorLive,
   MissionSchedulerReactorLive,
@@ -551,6 +569,7 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
+  Layer.provideMerge(RoutingRuntimeLayerLive),
   Layer.provideMerge(MemoryRuntimeLayerLive),
   Layer.provideMerge(ServerSettingsLayerLive),
   Layer.provideMerge(CheckpointingLayerLive),

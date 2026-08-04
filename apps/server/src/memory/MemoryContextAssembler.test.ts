@@ -16,6 +16,7 @@ import {
   type Mission,
   type MissionTask,
   type OrchestrationThread,
+  type RoutingDecisionDetail,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -301,6 +302,66 @@ describe("MemoryContextAssembler", () => {
         assembled.providerInput.endsWith("Implement the bridge.\n\n[END CURRENT USER REQUEST]"),
       );
       assert.equal(assembled.auditRecordId, contextPackage.auditRecordId);
+    });
+  });
+
+  it.effect("caps optional memory retrieval with the routed model context budget", () => {
+    let receivedTokenBudget = 0;
+    const decision = {
+      decision: { constraintsSnapshot: { optionalContextTokenBudget: 1_024 } },
+    } as unknown as RoutingDecisionDetail;
+    const assembler = makeMemoryContextAssembler({
+      scopeResolver: { resolve: () => Effect.succeed(scope) },
+      routing: { getDecisionByRun: () => Effect.succeed(Option.some(decision)) },
+      retrieval: {
+        retrieve: (request) => {
+          receivedTokenBudget = request.tokenBudget;
+          return Effect.succeed({
+            context: contextPackage,
+            totalCandidateCount: 2,
+            excludedCandidateCount: 0,
+          });
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const assembled = yield* assembler.assemble({
+        threadId,
+        messageId,
+        userMessage: "Keep the required task intact.",
+      });
+      assert.equal(receivedTokenBudget, 1_024);
+      assert.isTrue(assembled.attached);
+    });
+  });
+
+  it.effect("skips optional retrieval when required task context consumes the model window", () => {
+    let retrievalCalled = false;
+    const decision = {
+      decision: { constraintsSnapshot: { optionalContextTokenBudget: 0 } },
+    } as unknown as RoutingDecisionDetail;
+    const assembler = makeMemoryContextAssembler({
+      scopeResolver: { resolve: () => Effect.succeed(scope) },
+      routing: { getDecisionByRun: () => Effect.succeed(Option.some(decision)) },
+      retrieval: {
+        retrieve: () => {
+          retrievalCalled = true;
+          return Effect.succeed({
+            context: contextPackage,
+            totalCandidateCount: 2,
+            excludedCandidateCount: 0,
+          });
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const userMessage = "This required task must never be truncated.";
+      const assembled = yield* assembler.assemble({ threadId, messageId, userMessage });
+      assert.isFalse(retrievalCalled);
+      assert.equal(assembled.providerInput, userMessage);
+      assert.isFalse(assembled.attached);
     });
   });
 

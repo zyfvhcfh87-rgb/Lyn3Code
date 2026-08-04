@@ -84,4 +84,15 @@ describe("searchSettings", () => {
       targetId: "appearance",
     });
   });
+
+  it("indexes the routing management sections", () => {
+    expect(searchSettings("model capabilities")[0]).toMatchObject({
+      id: "routing-models",
+      to: "/settings/routing",
+    });
+    expect(searchSettings("routing simulator")[0]).toMatchObject({
+      id: "routing-simulator",
+      to: "/settings/routing",
+    });
+  });
 });

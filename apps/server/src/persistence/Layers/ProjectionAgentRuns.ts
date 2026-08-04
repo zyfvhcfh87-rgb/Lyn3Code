@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { AgentPermissions } from "@t3tools/contracts";
+import { AgentPermissions, AgentRunModelSelection } from "@t3tools/contracts";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
@@ -37,20 +37,30 @@ const selectAgentRunColumns = `
   permissions_json AS "permissions",
   write_capable AS "writeCapable",
   purpose,
-  repair_attempt_id AS "repairAttemptId"
+  repair_attempt_id AS "repairAttemptId",
+  routing_decision_id AS "routingDecisionId",
+  model_selection_json AS "modelSelection",
+  routing_reasoning_level AS "reasoningLevel"
 `;
 
 const ProjectionAgentRunDbRow = ProjectionAgentRun.mapFields(
   Struct.assign({
     permissions: Schema.fromJsonString(AgentPermissions),
     writeCapable: Schema.Number,
+    modelSelection: Schema.NullOr(Schema.fromJsonString(AgentRunModelSelection)),
   }),
 );
 
-const toProjectionAgentRun = (row: typeof ProjectionAgentRunDbRow.Type): ProjectionAgentRun => ({
-  ...row,
-  writeCapable: row.writeCapable === 1,
-});
+const toProjectionAgentRun = (row: typeof ProjectionAgentRunDbRow.Type): ProjectionAgentRun => {
+  const { routingDecisionId, modelSelection, reasoningLevel, ...legacyRow } = row;
+  return {
+    ...legacyRow,
+    writeCapable: row.writeCapable === 1,
+    ...(routingDecisionId === null ? {} : { routingDecisionId }),
+    ...(modelSelection === null ? {} : { modelSelection }),
+    ...(reasoningLevel === null ? {} : { reasoningLevel }),
+  };
+};
 
 const makeProjectionAgentRunRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -79,7 +89,10 @@ const makeProjectionAgentRunRepository = Effect.gen(function* () {
           permissions_json,
           write_capable,
           purpose,
-          repair_attempt_id
+          repair_attempt_id,
+          routing_decision_id,
+          model_selection_json,
+          routing_reasoning_level
         ) VALUES (
           ${row.id},
           ${row.missionId},
@@ -100,7 +113,10 @@ const makeProjectionAgentRunRepository = Effect.gen(function* () {
           ${JSON.stringify(row.permissions)},
           ${row.writeCapable ? 1 : 0},
           ${row.purpose ?? "implementation"},
-          ${row.repairAttemptId ?? null}
+          ${row.repairAttemptId ?? null},
+          ${row.routingDecisionId ?? null},
+          ${row.modelSelection === undefined || row.modelSelection === null ? null : JSON.stringify(row.modelSelection)},
+          ${row.reasoningLevel ?? null}
         )
         ON CONFLICT (agent_run_id)
         DO UPDATE SET
@@ -122,7 +138,10 @@ const makeProjectionAgentRunRepository = Effect.gen(function* () {
           permissions_json = excluded.permissions_json,
           write_capable = excluded.write_capable,
           purpose = excluded.purpose,
-          repair_attempt_id = excluded.repair_attempt_id
+          repair_attempt_id = excluded.repair_attempt_id,
+          routing_decision_id = excluded.routing_decision_id,
+          model_selection_json = excluded.model_selection_json,
+          routing_reasoning_level = excluded.routing_reasoning_level
       `,
   });
 
@@ -202,9 +221,20 @@ const makeProjectionAgentRunRepository = Effect.gen(function* () {
   });
 
   const upsert: ProjectionAgentRunRepositoryShape["upsert"] = (row) =>
-    upsertProjectionAgentRunRow(row).pipe(
-      Effect.mapError(toPersistenceSqlError("ProjectionAgentRunRepository.upsert:query")),
-    );
+    Effect.gen(function* () {
+      yield* upsertProjectionAgentRunRow(row);
+      if (row.routingDecisionId !== undefined && row.routingDecisionId !== null) {
+        yield* sql`
+          UPDATE projection_routing_decisions
+          SET
+            status = 'applied',
+            agent_run_id = ${row.id},
+            applied_at = ${row.createdAt}
+          WHERE routing_decision_id = ${row.routingDecisionId}
+            AND status = 'planned'
+        `;
+      }
+    }).pipe(Effect.mapError(toPersistenceSqlError("ProjectionAgentRunRepository.upsert:query")));
 
   const getById: ProjectionAgentRunRepositoryShape["getById"] = (input) =>
     getProjectionAgentRunRow(input).pipe(

@@ -40,6 +40,42 @@ import type { ServerProviderShape } from "./Services/ServerProvider.ts";
  * and (later) settings UI. Doesn't need to be Effect-typed because nothing
  * about it is dynamic — drivers are registered at startup.
  */
+export type ProviderEndpointClass =
+  | "official_cloud"
+  | "compatible_api"
+  | "local_runtime"
+  | "enterprise_gateway"
+  | "custom";
+
+/**
+ * Where model inference occurs. This is deliberately separate from the
+ * adapter process location: every built-in adapter is a local process, but
+ * most of them send prompts to a remote provider.
+ */
+export type ProviderExecutionLocality = "local" | "remote" | "configurable" | "unknown";
+
+export type ProviderHarnessCapabilityState = "supported" | "unsupported" | "unknown";
+
+/**
+ * Capabilities supplied by the coding-agent harness rather than by an
+ * individual model. Model routing must still independently verify model
+ * capabilities; a tool-capable harness cannot make an unknown model
+ * tool-capable.
+ */
+export interface ProviderHarnessCapabilities {
+  readonly toolExecution: ProviderHarnessCapabilityState;
+  readonly codeEditing: ProviderHarnessCapabilityState;
+  readonly streaming: ProviderHarnessCapabilityState;
+  readonly structuredOutput: ProviderHarnessCapabilityState;
+  readonly attachmentInput: ProviderHarnessCapabilityState;
+}
+
+export interface ProviderDriverConcurrencyMetadata {
+  /** Null means the driver has no authoritative static limit. */
+  readonly maximumConcurrentSessions: number | null;
+  readonly source: "official_configuration" | "unknown";
+}
+
 export interface ProviderDriverMetadata {
   /** Human-readable name for the driver itself (e.g. "Codex"). */
   readonly displayName: string;
@@ -50,6 +86,18 @@ export interface ProviderDriverMetadata {
    * rejects multi-instance configurations with a clear error.
    */
   readonly supportsMultipleInstances?: boolean;
+  /** Broad class of endpoint this driver targets by default. */
+  readonly endpointClass: ProviderEndpointClass;
+  /** Inference locality, not the location of the adapter executable. */
+  readonly executionLocality: ProviderExecutionLocality;
+  /** Whether the driver can authoritatively enumerate models at runtime. */
+  readonly supportsModelDiscovery: boolean;
+  /** Provenance of model option metadata emitted in provider snapshots. */
+  readonly modelMetadataSource: "provider_reported" | "official_configuration" | "unknown";
+  /** Conservative facts about the agent harness surrounding the model. */
+  readonly harnessCapabilities: ProviderHarnessCapabilities;
+  /** Static session capacity only; runtime health may impose a lower limit. */
+  readonly concurrency: ProviderDriverConcurrencyMetadata;
 }
 
 /**

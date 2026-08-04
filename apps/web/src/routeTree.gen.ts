@@ -17,6 +17,7 @@ import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsVerificationRouteImport } from './routes/settings.verification'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
+import { Route as SettingsRoutingRouteImport } from './routes/settings.routing'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
@@ -70,6 +71,11 @@ const SettingsVerificationRoute = SettingsVerificationRouteImport.update({
 const SettingsSourceControlRoute = SettingsSourceControlRouteImport.update({
   id: '/source-control',
   path: '/source-control',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsRoutingRoute = SettingsRoutingRouteImport.update({
+  id: '/routing',
+  path: '/routing',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
@@ -168,6 +174,7 @@ export interface FileRoutesByFullPath {
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
+  '/settings/routing': typeof SettingsRoutingRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/verification': typeof SettingsVerificationRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -191,6 +198,7 @@ export interface FileRoutesByTo {
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
+  '/settings/routing': typeof SettingsRoutingRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/verification': typeof SettingsVerificationRoute
   '/': typeof ChatIndexRoute
@@ -217,6 +225,7 @@ export interface FileRoutesById {
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
+  '/settings/routing': typeof SettingsRoutingRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/verification': typeof SettingsVerificationRoute
   '/_chat/': typeof ChatIndexRoute
@@ -244,6 +253,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/settings/keybindings'
     | '/settings/providers'
+    | '/settings/routing'
     | '/settings/source-control'
     | '/settings/verification'
     | '/$environmentId/$threadId'
@@ -267,6 +277,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/settings/keybindings'
     | '/settings/providers'
+    | '/settings/routing'
     | '/settings/source-control'
     | '/settings/verification'
     | '/'
@@ -292,6 +303,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/settings/keybindings'
     | '/settings/providers'
+    | '/settings/routing'
     | '/settings/source-control'
     | '/settings/verification'
     | '/_chat/'
@@ -369,6 +381,13 @@ declare module '@tanstack/react-router' {
       path: '/source-control'
       fullPath: '/settings/source-control'
       preLoaderRoute: typeof SettingsSourceControlRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/routing': {
+      id: '/settings/routing'
+      path: '/routing'
+      fullPath: '/settings/routing'
+      preLoaderRoute: typeof SettingsRoutingRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/providers': {
@@ -527,6 +546,7 @@ interface SettingsRouteChildren {
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
+  SettingsRoutingRoute: typeof SettingsRoutingRoute
   SettingsSourceControlRoute: typeof SettingsSourceControlRoute
   SettingsVerificationRoute: typeof SettingsVerificationRoute
 }
@@ -540,6 +560,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
+  SettingsRoutingRoute: SettingsRoutingRoute,
   SettingsSourceControlRoute: SettingsSourceControlRoute,
   SettingsVerificationRoute: SettingsVerificationRoute,
 }

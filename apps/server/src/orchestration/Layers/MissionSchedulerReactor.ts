@@ -22,6 +22,7 @@ import {
 } from "../Services/MissionSchedulerReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { planMissionSchedule } from "../MissionScheduler.ts";
+import { RoutingCoordinator } from "../../routing/RoutingCoordinator.ts";
 
 type SchedulerTrigger = Extract<
   OrchestrationEvent,
@@ -49,15 +50,11 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const commandId = (missionId: MissionId, taskId: string, action: string) =>
   CommandId.make(`server:scheduler:${missionId}:${taskId}:${action}`);
 
-const blockedReasons = new Set([
-  "dependency_missing",
-  "dependency_failed",
-  "agent_unavailable",
-  "agent_model_unconfigured",
-]);
+const blockedReasons = new Set(["dependency_missing", "dependency_failed", "agent_unavailable"]);
 
 const make = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
+  const routing = yield* RoutingCoordinator;
   const query = yield* ProjectionSnapshotQuery;
   if (query.getMissionDetailSnapshot === undefined) {
     return {
@@ -146,35 +143,37 @@ const make = Effect.gen(function* () {
       const task = detail.tasks.find((entry) => entry.id === taskId);
       const decision = plan.decisions.find((entry) => entry.taskId === taskId);
       const agent = detail.missionAgents.find((entry) => entry.id === task?.assignedMissionAgentId);
-      if (
-        task === undefined ||
-        decision === undefined ||
-        agent?.model === null ||
-        agent === undefined
-      )
-        continue;
+      if (task === undefined || decision === undefined || agent === undefined) continue;
       const attemptNumber = task.attemptCount + 1;
       const runId = AgentRunId.make(
         `mission:${detail.mission.id}:task:${task.id}:attempt:${attemptNumber}`,
       );
-      yield* dispatch({
-        type: "mission.start",
-        commandId: commandId(detail.mission.id, task.id, `start:${attemptNumber}`),
-        missionId: detail.mission.id,
-        taskId: task.id,
-        agentRunId: runId,
-        threadId: ThreadId.make(`${runId}:thread`),
-        providerInstanceId: agent.providerInstanceId,
-        modelSelection: { instanceId: agent.providerInstanceId, model: agent.model },
-        runtimeMode: decisionRuntimeMode(agent.permissions),
-        missionAgentId: agent.id,
-        ...(decision.worktreeId !== null ? { worktreeId: decision.worktreeId } : {}),
-        attemptNumber,
-        permissions: agent.permissions,
-        writeCapable:
-          agent.permissions.includes("write_files") || agent.permissions.includes("create_commits"),
-        createdAt: observedAt,
-      });
+      yield* routing
+        .routeAndStart({
+          missionId: detail.mission.id,
+          taskId: task.id,
+          agentRunId: runId,
+          threadId: ThreadId.make(`${runId}:thread`),
+          runtimeMode: decisionRuntimeMode(agent.permissions),
+          missionAgentId: agent.id,
+          ...(decision.worktreeId !== null ? { worktreeId: decision.worktreeId } : {}),
+          attemptNumber,
+          permissions: agent.permissions,
+          writeCapable:
+            agent.permissions.includes("write_files") ||
+            agent.permissions.includes("create_commits"),
+          requestedAt: observedAt,
+        })
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("mission task routing did not start a run", {
+              missionId: detail.mission.id,
+              taskId: task.id,
+              reason: error.reason,
+              detail: error.message,
+            }),
+          ),
+        );
     }
   });
 

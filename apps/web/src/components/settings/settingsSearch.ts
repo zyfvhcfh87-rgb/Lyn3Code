@@ -3,6 +3,7 @@ export type SettingsPath =
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/providers"
+  | "/settings/routing"
   | "/settings/source-control"
   | "/settings/verification"
   | "/settings/connections"
@@ -25,6 +26,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
+  "/settings/routing": "Routing",
   "/settings/source-control": "Source Control",
   "/settings/verification": "Verification",
   "/settings/connections": "Connections",
@@ -137,6 +139,46 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "providers",
     title: "Providers",
     to: "/settings/providers",
+  },
+  {
+    id: "routing-registry",
+    title: "Provider routing registry",
+    to: "/settings/routing",
+  },
+  {
+    id: "routing-models",
+    title: "Model capabilities",
+    to: "/settings/routing",
+  },
+  {
+    id: "routing-defaults",
+    title: "Routing defaults",
+    to: "/settings/routing",
+  },
+  {
+    id: "routing-role-defaults",
+    title: "Agent role routing defaults",
+    to: "/settings/routing",
+  },
+  {
+    id: "routing-policies",
+    title: "Routing policies",
+    to: "/settings/routing",
+  },
+  {
+    id: "routing-fallbacks",
+    title: "Fallback chains",
+    to: "/settings/routing",
+  },
+  {
+    id: "routing-overrides",
+    title: "Routing overrides",
+    to: "/settings/routing",
+  },
+  {
+    id: "routing-simulator",
+    title: "Routing simulator",
+    to: "/settings/routing",
   },
   {
     id: "source-control",

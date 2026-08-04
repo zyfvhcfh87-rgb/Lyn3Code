@@ -92,7 +92,7 @@ export type RuntimeContentStreamKind = typeof RuntimeContentStreamKind.Type;
 const RuntimeSessionExitKind = Schema.Literals(["graceful", "error"]);
 export type RuntimeSessionExitKind = typeof RuntimeSessionExitKind.Type;
 
-const RuntimeErrorClass = Schema.Literals([
+export const RuntimeErrorClass = Schema.Literals([
   "provider_error",
   "transport_error",
   "permission_error",
