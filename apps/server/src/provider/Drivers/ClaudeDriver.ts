@@ -113,6 +113,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
   metadata: {
     displayName: "Claude",
     supportsMultipleInstances: true,
+    endpointClass: "official_cloud",
+    executionLocality: "remote",
+    supportsModelDiscovery: false,
+    modelMetadataSource: "official_configuration",
+    harnessCapabilities: {
+      toolExecution: "supported",
+      codeEditing: "supported",
+      streaming: "supported",
+      structuredOutput: "unknown",
+      attachmentInput: "unknown",
+    },
+    concurrency: { maximumConcurrentSessions: null, source: "unknown" },
   },
   configSchema: ClaudeSettings,
   defaultConfig: (): ClaudeSettings => decodeClaudeSettings({}),

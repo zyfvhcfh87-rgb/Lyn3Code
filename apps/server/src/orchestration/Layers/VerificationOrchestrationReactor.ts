@@ -37,6 +37,7 @@ import { ProjectionProjectRepository } from "../../persistence/Services/Projecti
 import { ProjectionVerificationConfigurationRepository } from "../../persistence/Services/ProjectionVerificationConfiguration.ts";
 import { ProjectionVerificationRunRepository } from "../../persistence/Services/ProjectionVerificationRuns.ts";
 import { forkParked } from "../../serverActivation.ts";
+import { RoutingCoordinator } from "../../routing/RoutingCoordinator.ts";
 import {
   VerificationConfigService,
   type DiscoveredVerificationConfig,
@@ -291,6 +292,7 @@ export const createFailedGateDiagnosticPlan = (input: {
 
 const make = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
+  const routing = yield* RoutingCoordinator;
   const query = yield* ProjectionSnapshotQuery;
   const projects = yield* ProjectionProjectRepository;
   const configurations = yield* ProjectionVerificationConfigurationRepository;
@@ -1434,12 +1436,7 @@ const make = Effect.gen(function* () {
       (entry) => entry.id === task?.assignedMissionAgentId,
     );
     const worktree = detail.value.managedWorktrees.find((entry) => entry.id === task?.worktreeId);
-    if (
-      task === undefined ||
-      agent === undefined ||
-      agent.model === null ||
-      worktree === undefined
-    ) {
+    if (task === undefined || agent === undefined || worktree === undefined) {
       return yield* Effect.logWarning("verification repair has no runnable task agent/worktree", {
         verificationRunId: failedRun.value.id,
         taskId: event.payload.taskId,
@@ -1503,15 +1500,11 @@ const make = Effect.gen(function* () {
         permission !== "manage_worktrees" &&
         permission !== "integrate_branches",
     );
-    yield* dispatch({
-      type: "mission.start",
-      commandId: commandId(failedRun.value.id, `repair:${attemptNumber}:agent-start`),
+    yield* routing.routeAndStart({
       missionId: event.payload.missionId,
       taskId: task.id,
       agentRunId,
       threadId: ThreadId.make(`${agentRunId}:thread`),
-      providerInstanceId: agent.providerInstanceId,
-      modelSelection: { instanceId: agent.providerInstanceId, model: agent.model },
       runtimeMode:
         permissions.includes("write_files") || permissions.includes("create_commits")
           ? "full-access"
@@ -1523,7 +1516,7 @@ const make = Effect.gen(function* () {
       writeCapable: permissions.includes("write_files") || permissions.includes("create_commits"),
       purpose: "verification_repair",
       repairAttemptId: attemptId,
-      createdAt,
+      requestedAt: createdAt,
     });
   });
 
@@ -1754,23 +1747,27 @@ const make = Effect.gen(function* () {
   });
 
   const worker = yield* makeDrainableWorker((event: VerificationTrigger) =>
-    (event.type === "verification.requested"
-      ? processRequested(event)
-      : event.type === "verification.settings_updated"
-        ? processSettingsUpdated(event)
-        : event.type === "integration.completed"
-          ? requestAfterIntegration(event)
-          : event.type === "verification.repair_requested"
-            ? processRepairRequested(event)
-            : event.type === "verification.override_requested"
-              ? processOverrideRequested(event)
-              : event.type === "agent_run.completed" ||
-                  event.type === "agent_run.cancelled" ||
-                  event.type === "agent_run.failed" ||
-                  event.type === "agent_run.interrupted"
-                ? processRepairTerminal(event)
-                : Effect.void
-    ).pipe(
+    Effect.gen(function* () {
+      if (event.type === "verification.requested") return yield* processRequested(event);
+      if (event.type === "verification.settings_updated") {
+        return yield* processSettingsUpdated(event);
+      }
+      if (event.type === "integration.completed") return yield* requestAfterIntegration(event);
+      if (event.type === "verification.repair_requested") {
+        return yield* processRepairRequested(event);
+      }
+      if (event.type === "verification.override_requested") {
+        return yield* processOverrideRequested(event);
+      }
+      if (
+        event.type === "agent_run.completed" ||
+        event.type === "agent_run.cancelled" ||
+        event.type === "agent_run.failed" ||
+        event.type === "agent_run.interrupted"
+      ) {
+        return yield* processRepairTerminal(event);
+      }
+    }).pipe(
       Effect.catchCause((cause) =>
         Effect.logError("verification orchestration failed", {
           eventType: event.type,

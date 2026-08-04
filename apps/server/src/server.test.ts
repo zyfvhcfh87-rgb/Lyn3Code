@@ -86,6 +86,7 @@ import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSna
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import * as RoutingCoordinator from "./routing/RoutingCoordinator.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -331,6 +332,7 @@ const buildAppUnderTest = (options?: {
   layers?: {
     keybindings?: Partial<Keybindings.Keybindings["Service"]>;
     providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
+    routingCoordinator?: Partial<RoutingCoordinator.RoutingCoordinator["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
@@ -569,18 +571,23 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mock(ProviderRegistry.ProviderRegistry)({
-          getProviders: Effect.succeed([]),
-          refresh: () => Effect.succeed([]),
-          refreshInstance: () => Effect.succeed([]),
-          getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
-            Effect.succeed(
-              makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
-            ),
-          setProviderMaintenanceActionState: () => Effect.succeed([]),
-          streamChanges: Stream.empty,
-          ...options?.layers?.providerRegistry,
-        }),
+        Layer.mergeAll(
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed([]),
+            refresh: () => Effect.succeed([]),
+            refreshInstance: () => Effect.succeed([]),
+            getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
+              ),
+            setProviderMaintenanceActionState: () => Effect.succeed([]),
+            streamChanges: Stream.empty,
+            ...options?.layers?.providerRegistry,
+          }),
+          Layer.mock(RoutingCoordinator.RoutingCoordinator)({
+            ...options?.layers?.routingCoordinator,
+          }),
+        ),
       ),
       Layer.provide(
         Layer.mock(ServerSettings.ServerSettingsService)({

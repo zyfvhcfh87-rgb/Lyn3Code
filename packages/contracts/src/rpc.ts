@@ -236,6 +236,36 @@ import {
   VerificationProjectConfigurationSnapshot,
 } from "./verification.ts";
 import {
+  RoutingAssessmentMutationResult,
+  RoutingCapabilitySnapshotMutationResult,
+  RoutingDecisionDetail,
+  RoutingDecisionLookupInput,
+  RoutingHistoryInput,
+  RoutingHistoryPage,
+  RoutingOverrideMutationResult,
+  RoutingModelProfileMutationResult,
+  RoutingPolicyMutationResult,
+  RoutingProviderProfileMutationResult,
+  RoutingRefreshRegistryInput,
+  RoutingRegistrySnapshot,
+  RoutingRevokeOverrideInput,
+  RoutingRpcError,
+  RoutingRuleMutationResult,
+  RoutingSaveAssessmentInput,
+  RoutingSaveCapabilitySnapshotInput,
+  RoutingSaveModelProfileInput,
+  RoutingSaveOverrideInput,
+  RoutingSavePolicyInput,
+  RoutingSaveProviderProfileInput,
+  RoutingSaveRuleInput,
+  RoutingSimulationInput,
+  RoutingSimulationResult,
+  RoutingStartMissionInput,
+  RoutingStartMissionResult,
+  RoutingWorkspaceScope,
+  RoutingWorkspaceSnapshot,
+} from "./routingRpc.ts";
+import {
   MissionTaskId,
   MissionId,
   MissionAgentId,
@@ -316,6 +346,24 @@ export const WS_METHODS = {
   memoryExport: "memory.export",
   memoryImport: "memory.import",
   memorySubscribeWorkspace: "memory.subscribeWorkspace",
+
+  // Intelligent provider and model routing
+  routingGetRegistry: "routing.getRegistry",
+  routingGetWorkspace: "routing.getWorkspace",
+  routingGetDecision: "routing.getDecision",
+  routingListHistory: "routing.listHistory",
+  routingSimulate: "routing.simulate",
+  routingStartMission: "routing.startMission",
+  routingSavePolicy: "routing.savePolicy",
+  routingSaveRule: "routing.saveRule",
+  routingSaveOverride: "routing.saveOverride",
+  routingRevokeOverride: "routing.revokeOverride",
+  routingSaveAssessment: "routing.saveAssessment",
+  routingSaveProviderProfile: "routing.saveProviderProfile",
+  routingSaveModelProfile: "routing.saveModelProfile",
+  routingSaveCapabilitySnapshot: "routing.saveCapabilitySnapshot",
+  routingRefreshRegistry: "routing.refreshRegistry",
+  routingSubscribeWorkspace: "routing.subscribeWorkspace",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -1085,6 +1133,108 @@ export const WsMemorySubscribeWorkspaceRpc = Rpc.make(WS_METHODS.memorySubscribe
   stream: true,
 });
 
+const RoutingRpcErrorSchema = Schema.Union([RoutingRpcError, EnvironmentAuthorizationError]);
+
+export const WsRoutingGetRegistryRpc = Rpc.make(WS_METHODS.routingGetRegistry, {
+  payload: Schema.Struct({}),
+  success: RoutingRegistrySnapshot,
+  error: RoutingRpcErrorSchema,
+});
+
+export const WsRoutingGetWorkspaceRpc = Rpc.make(WS_METHODS.routingGetWorkspace, {
+  payload: RoutingWorkspaceScope,
+  success: RoutingWorkspaceSnapshot,
+  error: RoutingRpcErrorSchema,
+});
+
+export const WsRoutingGetDecisionRpc = Rpc.make(WS_METHODS.routingGetDecision, {
+  payload: RoutingDecisionLookupInput,
+  success: RoutingDecisionDetail,
+  error: RoutingRpcErrorSchema,
+});
+
+export const WsRoutingListHistoryRpc = Rpc.make(WS_METHODS.routingListHistory, {
+  payload: RoutingHistoryInput,
+  success: RoutingHistoryPage,
+  error: RoutingRpcErrorSchema,
+});
+
+export const WsRoutingSimulateRpc = Rpc.make(WS_METHODS.routingSimulate, {
+  payload: RoutingSimulationInput,
+  success: RoutingSimulationResult,
+  error: RoutingRpcErrorSchema,
+});
+
+export const WsRoutingStartMissionRpc = Rpc.make(WS_METHODS.routingStartMission, {
+  payload: RoutingStartMissionInput,
+  success: RoutingStartMissionResult,
+  error: RoutingRpcErrorSchema,
+});
+
+export const WsRoutingSavePolicyRpc = Rpc.make(WS_METHODS.routingSavePolicy, {
+  payload: RoutingSavePolicyInput,
+  success: RoutingPolicyMutationResult,
+  error: RoutingRpcErrorSchema,
+});
+
+export const WsRoutingSaveRuleRpc = Rpc.make(WS_METHODS.routingSaveRule, {
+  payload: RoutingSaveRuleInput,
+  success: RoutingRuleMutationResult,
+  error: RoutingRpcErrorSchema,
+});
+
+export const WsRoutingSaveOverrideRpc = Rpc.make(WS_METHODS.routingSaveOverride, {
+  payload: RoutingSaveOverrideInput,
+  success: RoutingOverrideMutationResult,
+  error: RoutingRpcErrorSchema,
+});
+
+export const WsRoutingRevokeOverrideRpc = Rpc.make(WS_METHODS.routingRevokeOverride, {
+  payload: RoutingRevokeOverrideInput,
+  success: RoutingOverrideMutationResult,
+  error: RoutingRpcErrorSchema,
+});
+
+export const WsRoutingSaveAssessmentRpc = Rpc.make(WS_METHODS.routingSaveAssessment, {
+  payload: RoutingSaveAssessmentInput,
+  success: RoutingAssessmentMutationResult,
+  error: RoutingRpcErrorSchema,
+});
+
+export const WsRoutingSaveProviderProfileRpc = Rpc.make(WS_METHODS.routingSaveProviderProfile, {
+  payload: RoutingSaveProviderProfileInput,
+  success: RoutingProviderProfileMutationResult,
+  error: RoutingRpcErrorSchema,
+});
+
+export const WsRoutingSaveModelProfileRpc = Rpc.make(WS_METHODS.routingSaveModelProfile, {
+  payload: RoutingSaveModelProfileInput,
+  success: RoutingModelProfileMutationResult,
+  error: RoutingRpcErrorSchema,
+});
+
+export const WsRoutingSaveCapabilitySnapshotRpc = Rpc.make(
+  WS_METHODS.routingSaveCapabilitySnapshot,
+  {
+    payload: RoutingSaveCapabilitySnapshotInput,
+    success: RoutingCapabilitySnapshotMutationResult,
+    error: RoutingRpcErrorSchema,
+  },
+);
+
+export const WsRoutingRefreshRegistryRpc = Rpc.make(WS_METHODS.routingRefreshRegistry, {
+  payload: RoutingRefreshRegistryInput,
+  success: RoutingRegistrySnapshot,
+  error: RoutingRpcErrorSchema,
+});
+
+export const WsRoutingSubscribeWorkspaceRpc = Rpc.make(WS_METHODS.routingSubscribeWorkspace, {
+  payload: RoutingWorkspaceScope,
+  success: RoutingWorkspaceSnapshot,
+  error: RoutingRpcErrorSchema,
+  stream: true,
+});
+
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusInput,
   success: VcsStatusStreamEvent,
@@ -1487,6 +1637,22 @@ export const WsRpcGroup = RpcGroup.make(
   WsMemoryExportRpc,
   WsMemoryImportRpc,
   WsMemorySubscribeWorkspaceRpc,
+  WsRoutingGetRegistryRpc,
+  WsRoutingGetWorkspaceRpc,
+  WsRoutingGetDecisionRpc,
+  WsRoutingListHistoryRpc,
+  WsRoutingSimulateRpc,
+  WsRoutingStartMissionRpc,
+  WsRoutingSavePolicyRpc,
+  WsRoutingSaveRuleRpc,
+  WsRoutingSaveOverrideRpc,
+  WsRoutingRevokeOverrideRpc,
+  WsRoutingSaveAssessmentRpc,
+  WsRoutingSaveProviderProfileRpc,
+  WsRoutingSaveModelProfileRpc,
+  WsRoutingSaveCapabilitySnapshotRpc,
+  WsRoutingRefreshRegistryRpc,
+  WsRoutingSubscribeWorkspaceRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,

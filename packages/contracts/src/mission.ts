@@ -12,12 +12,15 @@ import {
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  RoutingDecisionId,
   TaskDependencyId,
   ThreadId,
   TrimmedNonEmptyString,
   VerificationRepairAttemptId,
 } from "./baseSchemas.ts";
+import { ProviderOptionSelections } from "./model.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { RoutingReasoningLevel } from "./routing.ts";
 
 const BoundedSummary = Schema.String.check(Schema.isMaxLength(8_000));
 const BoundedDetail = Schema.String.check(Schema.isMaxLength(4_000));
@@ -343,6 +346,14 @@ export const MissionTask = Schema.Struct({
 });
 export type MissionTask = typeof MissionTask.Type;
 
+/** Frozen provider/model/options used by a routed run. */
+export const AgentRunModelSelection = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  model: TrimmedNonEmptyString,
+  options: Schema.optional(ProviderOptionSelections),
+});
+export type AgentRunModelSelection = typeof AgentRunModelSelection.Type;
+
 export const AgentRun = Schema.Struct({
   id: AgentRunId,
   missionId: MissionId,
@@ -370,6 +381,9 @@ export const AgentRun = Schema.Struct({
   writeCapable: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   purpose: Schema.optional(AgentRunPurpose),
   repairAttemptId: Schema.optional(Schema.NullOr(VerificationRepairAttemptId)),
+  routingDecisionId: Schema.optional(Schema.NullOr(RoutingDecisionId)),
+  modelSelection: Schema.optional(Schema.NullOr(AgentRunModelSelection)),
+  reasoningLevel: Schema.optional(Schema.NullOr(RoutingReasoningLevel)),
 });
 export type AgentRun = typeof AgentRun.Type;
 

@@ -5,6 +5,7 @@ import {
   LoaderIcon,
   PlusIcon,
   RefreshCwIcon,
+  RouteIcon,
   SettingsIcon,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
@@ -2036,6 +2037,19 @@ export function ProviderSettingsPanel() {
           </div>
         }
       >
+        <SettingsRow
+          title={
+            <span className="inline-flex items-center gap-1.5">
+              <RouteIcon className="size-4" /> Intelligent routing
+            </span>
+          }
+          description="Inspect model capabilities and health, then configure project policies, pins, fallback chains, and simulations."
+          control={
+            <Button render={<Link to="/settings/routing" />} size="sm" variant="outline">
+              Open routing
+            </Button>
+          }
+        />
         <SettingsRow
           title={
             <span className="inline-flex items-center gap-1.5">

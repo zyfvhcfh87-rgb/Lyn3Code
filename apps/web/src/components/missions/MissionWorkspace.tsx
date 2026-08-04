@@ -40,6 +40,7 @@ import { Separator } from "../ui/separator";
 import { CreateTaskDialog, type CreateMissionTaskInput } from "./CreateTaskDialog";
 import { MissionAgentActivity } from "./MissionAgentActivity";
 import { MissionIntegrationQueue } from "./MissionIntegrationQueue";
+import { MissionRoutingWorkspacePanel } from "./MissionRoutingPanel";
 import { MissionStatusBadge } from "./MissionStatusBadge";
 import { MissionTaskGraph } from "./MissionTaskGraph";
 import {
@@ -259,6 +260,14 @@ export function MissionWorkspace({
               onRemoveAgent={onRemoveAgent}
               onUpdatePermissions={onUpdateAgentPermissions}
               onSchedulerAction={onSchedulerAction}
+            />
+
+            <MissionRoutingWorkspacePanel
+              environmentId={environmentId}
+              mission={mission}
+              tasks={tasks}
+              canMutate={canMutate}
+              onConfigureTeam={onConfigureTeam}
             />
 
             <section aria-labelledby="mission-tasks-heading" className="grid gap-3">

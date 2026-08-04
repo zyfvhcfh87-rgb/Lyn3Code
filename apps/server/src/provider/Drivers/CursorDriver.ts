@@ -96,6 +96,18 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
   metadata: {
     displayName: "Cursor",
     supportsMultipleInstances: true,
+    endpointClass: "official_cloud",
+    executionLocality: "remote",
+    supportsModelDiscovery: true,
+    modelMetadataSource: "provider_reported",
+    harnessCapabilities: {
+      toolExecution: "supported",
+      codeEditing: "supported",
+      streaming: "supported",
+      structuredOutput: "unknown",
+      attachmentInput: "unknown",
+    },
+    concurrency: { maximumConcurrentSessions: null, source: "unknown" },
   },
   configSchema: CursorSettings,
   defaultConfig: (): CursorSettings => decodeCursorSettings({}),

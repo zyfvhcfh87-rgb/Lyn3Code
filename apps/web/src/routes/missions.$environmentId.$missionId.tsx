@@ -2,7 +2,6 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   EnvironmentId,
-  hasWritePermission,
   MissionId,
   type AgentPermission,
   type AgentRoleKind,
@@ -30,22 +29,12 @@ import { toastManager } from "../components/ui/toast";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isMissionEnvironmentUnavailable } from "../lib/missionConnection";
-import {
-  newAgentRunId,
-  newMissionAgentId,
-  newMissionTaskId,
-  newTaskDependencyId,
-} from "../lib/missionIds";
-import { newThreadId } from "../lib/utils";
-import {
-  deriveProviderInstanceEntries,
-  getDefaultProviderInstanceModel,
-  isProviderInstancePickerReady,
-  resolveDefaultProviderModelSelection,
-} from "../providerInstances";
+import { newMissionAgentId, newMissionTaskId, newTaskDependencyId } from "../lib/missionIds";
+import { deriveProviderInstanceEntries, isProviderInstancePickerReady } from "../providerInstances";
 import { useProjects, useServerConfigs } from "../state/entities";
 import { useEnvironment, useEnvironments } from "../state/environments";
 import { missionEnvironment, useMissionDetailState } from "../state/missions";
+import { routingEnvironment } from "../state/routing";
 import { verificationEnvironment } from "../state/verification";
 import { useAtomCommand } from "../state/use-atom-command";
 import { DEFAULT_RUNTIME_MODE } from "../types";
@@ -85,7 +74,7 @@ function MissionDetailRoute() {
 
   const createTask = useAtomCommand(missionEnvironment.createTask, { reportFailure: false });
   const updateTask = useAtomCommand(missionEnvironment.updateTask, { reportFailure: false });
-  const startMission = useAtomCommand(missionEnvironment.start, { reportFailure: false });
+  const startMission = useAtomCommand(routingEnvironment.startMission, { reportFailure: false });
   const cancelMission = useAtomCommand(missionEnvironment.cancel, { reportFailure: false });
   const configureTeam = useAtomCommand(missionEnvironment.configureTeam, { reportFailure: false });
   const upsertAgent = useAtomCommand(missionEnvironment.upsertAgent, { reportFailure: false });
@@ -136,10 +125,6 @@ function MissionDetailRoute() {
       ) ?? null)
     : null;
   const serverConfig = serverConfigs.get(environmentId);
-  const modelSelection = resolveDefaultProviderModelSelection(
-    serverConfig?.providers ?? [],
-    project?.defaultModelSelection,
-  );
   const providerEntries = deriveProviderInstanceEntries(serverConfig?.providers ?? []);
   const providerChoices = providerEntries
     .filter(isProviderInstancePickerReady)
@@ -219,20 +204,6 @@ function MissionDetailRoute() {
     const agent = task?.assignedMissionAgentId
       ? snapshot.missionAgents.find((candidate) => candidate.id === task.assignedMissionAgentId)
       : null;
-    const instanceId = agent?.providerInstanceId ?? modelSelection?.instanceId;
-    const model =
-      agent?.model ??
-      (instanceId
-        ? getDefaultProviderInstanceModel(serverConfig?.providers ?? [], instanceId)
-        : null);
-    if (!instanceId || !model) {
-      toastManager.add({
-        type: "error",
-        title: "No provider is ready",
-        description: "Choose an available provider and model before starting this task.",
-      });
-      return;
-    }
     await runAction(
       taskId ? `task:${taskId}` : "mission:start",
       taskId ? "Failed to start task" : "Failed to start mission",
@@ -242,16 +213,9 @@ function MissionDetailRoute() {
           input: {
             missionId,
             ...(taskId ? { taskId } : {}),
-            agentRunId: newAgentRunId(),
-            threadId: newThreadId(),
-            providerInstanceId: instanceId,
-            modelSelection: { instanceId, model },
             runtimeMode: DEFAULT_RUNTIME_MODE,
-            ...(agent ? { missionAgentId: agent.id, permissions: agent.permissions } : {}),
-            ...(task?.worktreeId ? { worktreeId: task.worktreeId } : {}),
-            ...(task ? { attemptNumber: task.attemptCount + 1 } : {}),
-            ...(agent ? { writeCapable: hasWritePermission(agent.permissions) } : {}),
-            createdAt: new Date().toISOString(),
+            ...(agent ? { missionAgentId: agent.id } : {}),
+            requestedAt: new Date().toISOString(),
           },
         }),
       taskId ? "Task started" : "Mission started",

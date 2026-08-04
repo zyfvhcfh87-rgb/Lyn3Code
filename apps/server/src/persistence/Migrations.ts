@@ -54,6 +54,7 @@ import Migration0037 from "./Migrations/037_MissionTeamsAndWorktrees.ts";
 import Migration0038 from "./Migrations/038_AutomatedVerification.ts";
 import Migration0039 from "./Migrations/039_GitHubWorkspace.ts";
 import Migration0040 from "./Migrations/040_PersistentProjectMemory.ts";
+import Migration0041 from "./Migrations/041_IntelligentRouting.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -106,6 +107,7 @@ export const migrationEntries = [
   [38, "AutomatedVerification", Migration0038],
   [39, "GitHubWorkspace", Migration0039],
   [40, "PersistentProjectMemory", Migration0040],
+  [41, "IntelligentRouting", Migration0041],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

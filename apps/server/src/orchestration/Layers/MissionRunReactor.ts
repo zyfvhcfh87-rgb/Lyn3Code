@@ -12,6 +12,7 @@ import {
   type ManagedWorktree,
   type MissionAgent,
   type ProviderRuntimeEvent,
+  type RuntimeErrorClass,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
@@ -216,6 +217,7 @@ const make = Effect.gen(function* () {
     missionId: MissionId,
     detail: string,
     failedAt?: string,
+    runtimeErrorClass?: RuntimeErrorClass,
   ) {
     const occurredAt = failedAt ?? (yield* nowIso);
     const run = yield* runRepository.getById({ agentRunId: runId });
@@ -228,6 +230,7 @@ const make = Effect.gen(function* () {
       missionId,
       agentRunId: runId,
       errorSummary: detail,
+      runtimeErrorClass: runtimeErrorClass ?? null,
       failedAt: occurredAt,
     });
   });
@@ -421,6 +424,8 @@ const make = Effect.gen(function* () {
         current.id,
         current.missionId,
         event.payload.session.lastError ?? "Provider session failed.",
+        undefined,
+        event.payload.session.runtimeErrorClass ?? undefined,
       );
       return;
     }

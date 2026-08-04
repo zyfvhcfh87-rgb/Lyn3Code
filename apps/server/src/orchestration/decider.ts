@@ -1735,6 +1735,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         writeCapable,
         purpose: runPurpose,
         repairAttemptId: command.repairAttemptId ?? null,
+        routingDecisionId: command.routingDecisionId ?? null,
+        modelSelection: command.modelSelection,
+        reasoningLevel: command.reasoningLevel ?? null,
       };
       const events: PlannedOrchestrationEvent[] = [
         {
@@ -3580,6 +3583,55 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "routing.event.record": {
+      const project =
+        command.payload.projectId === null
+          ? null
+          : yield* requireProject({
+              readModel,
+              command,
+              projectId: command.payload.projectId,
+            });
+      const mission =
+        command.payload.missionId === null
+          ? null
+          : yield* requireMission({
+              readModel,
+              command,
+              missionId: command.payload.missionId,
+            });
+      if (mission !== null && (project === null || mission.projectId !== project.id)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Routing event '${command.eventType}' has a mismatched mission and project.`,
+        });
+      }
+      if (command.payload.taskId !== null) {
+        if (mission === null) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Routing event '${command.eventType}' cannot reference a task without a mission.`,
+          });
+        }
+        yield* requireMissionTask({
+          readModel,
+          command,
+          missionId: mission.id,
+          taskId: command.payload.taskId,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "routing",
+          aggregateId: command.aggregateId,
+          occurredAt: command.payload.occurredAt,
+          commandId: command.commandId,
+        })),
+        type: command.eventType,
+        payload: command.payload,
+      };
+    }
+
     case "mission.agent-run.mark-running": {
       const run = yield* requireAgentRun({
         readModel,
@@ -3817,6 +3869,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             agentRunId: run.id,
             occurredAt: command.failedAt,
             errorSummary: command.errorSummary,
+            runtimeErrorClass: command.runtimeErrorClass ?? null,
           },
         },
       ];

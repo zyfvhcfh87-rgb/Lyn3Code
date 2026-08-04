@@ -110,6 +110,18 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
   metadata: {
     displayName: "Codex",
     supportsMultipleInstances: true,
+    endpointClass: "official_cloud",
+    executionLocality: "remote",
+    supportsModelDiscovery: true,
+    modelMetadataSource: "provider_reported",
+    harnessCapabilities: {
+      toolExecution: "supported",
+      codeEditing: "supported",
+      streaming: "supported",
+      structuredOutput: "unknown",
+      attachmentInput: "unknown",
+    },
+    concurrency: { maximumConcurrentSessions: null, source: "unknown" },
   },
   configSchema: CodexSettings,
   defaultConfig: (): CodexSettings => decodeCodexSettings({}),

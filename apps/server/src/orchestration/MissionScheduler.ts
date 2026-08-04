@@ -22,7 +22,6 @@ export type MissionSchedulingReason =
   | "manual_start_required"
   | "unassigned_agent"
   | "agent_unavailable"
-  | "agent_model_unconfigured"
   | "agent_capacity"
   | "provider_capacity"
   | "write_capacity"
@@ -143,10 +142,6 @@ export const planMissionSchedule = (input: PlanMissionScheduleInput): MissionSch
     }
     if (agent.status === "disabled" || agent.status === "unavailable") {
       decision("agent_unavailable");
-      continue;
-    }
-    if (agent.model === null) {
-      decision("agent_model_unconfigured");
       continue;
     }
     if (input.mode === "automatic" && !input.mission.teamSettings.autoStartReadyTasks) {

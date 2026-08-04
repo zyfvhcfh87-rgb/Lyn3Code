@@ -20,6 +20,10 @@ import { ProjectionAgentRunRepository } from "../persistence/Services/Projection
 import { ProjectionMissionTaskRepository } from "../persistence/Services/ProjectionMissionTasks.ts";
 import { ProjectionMissionTeamRepository } from "../persistence/Services/ProjectionMissionTeams.ts";
 import { ProjectionMissionRepository } from "../persistence/Services/ProjectionMissions.ts";
+import {
+  ProjectionRoutingRepository,
+  type ProjectionRoutingRepositoryShape,
+} from "../persistence/Services/ProjectionRouting.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { redactMemorySourceText } from "./MemorySourceSecurity.ts";
 import {
@@ -267,6 +271,7 @@ export const formatMemoryContextForProvider = (
 export const makeMemoryContextAssembler = (dependencies: {
   readonly scopeResolver: MemoryContextScopeResolverShape;
   readonly retrieval: MemoryRetrievalShape;
+  readonly routing?: Pick<ProjectionRoutingRepositoryShape, "getDecisionByRun">;
 }): MemoryContextAssemblerShape => ({
   assemble: (input) =>
     Effect.gen(function* () {
@@ -280,6 +285,32 @@ export const makeMemoryContextAssembler = (dependencies: {
         };
       }
       const scope = scopeResult.success;
+      let routingTokenBudget: number | undefined;
+      if (scope.agentRunId !== null && dependencies.routing !== undefined) {
+        const decisionResult = yield* Effect.result(
+          dependencies.routing.getDecisionByRun({ agentRunId: scope.agentRunId }),
+        );
+        if (Result.isFailure(decisionResult)) {
+          return {
+            providerInput: input.userMessage,
+            attached: false,
+            auditRecordId: null,
+            fallbackReason: "Routing context budget is unavailable",
+          };
+        }
+        if (Option.isSome(decisionResult.success)) {
+          routingTokenBudget =
+            decisionResult.success.value.decision.constraintsSnapshot.optionalContextTokenBudget;
+        }
+      }
+      if (routingTokenBudget === 0) {
+        return {
+          providerInput: input.userMessage,
+          attached: false,
+          auditRecordId: null,
+          fallbackReason: "The selected model window is reserved for required task context",
+        };
+      }
       const retrievalRequest: MemoryRetrievalRequest = {
         projectId: scope.projectId,
         branchName: scope.branchName,
@@ -291,7 +322,7 @@ export const makeMemoryContextAssembler = (dependencies: {
         types: [],
         statuses: [],
         minimumTrust: null,
-        tokenBudget: 0,
+        tokenBudget: routingTokenBudget ?? 0,
         limit: 32,
         agentRunId: scope.agentRunId,
         threadId: input.threadId,
@@ -342,7 +373,12 @@ export const MemoryContextAssemblerLive = Layer.effect(
   Effect.gen(function* () {
     const scopeResolver = yield* MemoryContextScopeResolver;
     const retrieval = yield* MemoryRetrieval;
-    return makeMemoryContextAssembler({ scopeResolver, retrieval });
+    const routing = yield* Effect.serviceOption(ProjectionRoutingRepository);
+    return makeMemoryContextAssembler({
+      scopeResolver,
+      retrieval,
+      ...(Option.isNone(routing) ? {} : { routing: routing.value }),
+    });
   }),
 );
 

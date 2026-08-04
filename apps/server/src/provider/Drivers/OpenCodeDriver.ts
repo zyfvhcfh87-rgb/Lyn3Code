@@ -109,6 +109,18 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
   metadata: {
     displayName: "OpenCode",
     supportsMultipleInstances: true,
+    endpointClass: "custom",
+    executionLocality: "configurable",
+    supportsModelDiscovery: true,
+    modelMetadataSource: "provider_reported",
+    harnessCapabilities: {
+      toolExecution: "supported",
+      codeEditing: "supported",
+      streaming: "supported",
+      structuredOutput: "unknown",
+      attachmentInput: "unknown",
+    },
+    concurrency: { maximumConcurrentSessions: null, source: "unknown" },
   },
   configSchema: OpenCodeSettings,
   defaultConfig: (): OpenCodeSettings => decodeOpenCodeSettings({}),
