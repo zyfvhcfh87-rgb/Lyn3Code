@@ -37,6 +37,7 @@ import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Separator } from "../ui/separator";
+import { MissionDeliverySection, type DeliveryWorkspaceProps } from "../delivery";
 import { CreateTaskDialog, type CreateMissionTaskInput } from "./CreateTaskDialog";
 import { MissionAgentActivity } from "./MissionAgentActivity";
 import { MissionIntegrationQueue } from "./MissionIntegrationQueue";
@@ -99,6 +100,7 @@ export function MissionWorkspace({
   onAbortIntegration,
   onRemoveWorktree,
   onRequestVerification,
+  delivery,
 }: {
   readonly environmentId: EnvironmentId;
   readonly projectTitle: string;
@@ -160,6 +162,7 @@ export function MissionWorkspace({
   readonly onAbortIntegration: (taskId: MissionTaskId) => Promise<void>;
   readonly onRemoveWorktree: (worktreeId: ManagedWorktreeId) => Promise<void>;
   readonly onRequestVerification: (taskId: MissionTaskId) => Promise<void>;
+  readonly delivery?: DeliveryWorkspaceProps | undefined;
 }) {
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [openVerificationRunId, setOpenVerificationRunId] = useState<VerificationRunId | null>(
@@ -346,6 +349,8 @@ export function MissionWorkspace({
               onApprove={onApproveIntegration}
               onAbort={onAbortIntegration}
             />
+
+            <MissionDeliverySection delivery={delivery} />
           </div>
 
           <aside

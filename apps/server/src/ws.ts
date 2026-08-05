@@ -119,6 +119,7 @@ import * as MemoryWorkspace from "./memory/MemoryWorkspaceService.ts";
 import * as RoutingCoordinator from "./routing/RoutingCoordinator.ts";
 import * as UsageAnalyticsWorkspace from "./usage-analytics/UsageAnalyticsWorkspaceService.ts";
 import * as UsageAnalyticsEventRecorder from "./usage-analytics/UsageAnalyticsEventRecorder.ts";
+import * as DeliveryWorkspace from "./delivery/DeliveryWorkspaceService.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -375,6 +376,7 @@ const makeWsRpcLayer = (
       const memoryWorkspace = yield* MemoryWorkspace.MemoryWorkspaceService;
       const routing = yield* RoutingCoordinator.RoutingCoordinator;
       const usageAnalytics = yield* UsageAnalyticsWorkspace.UsageAnalyticsWorkspaceService;
+      const delivery = yield* DeliveryWorkspace.DeliveryWorkspaceService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
@@ -2380,6 +2382,104 @@ const makeWsRpcLayer = (
             WS_METHODS.analyticsSubscribeWorkspace,
             usageAnalytics.subscribeWorkspace(input.filter),
             { "rpc.aggregate": "analytics" },
+          ),
+        [WS_METHODS.deliveryGetWorkspace]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.deliveryGetWorkspace,
+            delivery.getWorkspace(input.projectId),
+            { "rpc.aggregate": "delivery" },
+          ),
+        [WS_METHODS.deliverySavePolicy]: (input) =>
+          observeRpcEffect(WS_METHODS.deliverySavePolicy, delivery.savePolicy(input), {
+            "rpc.aggregate": "delivery",
+          }),
+        [WS_METHODS.deliverySaveReleaseConfiguration]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.deliverySaveReleaseConfiguration,
+            delivery.saveReleaseConfiguration(input),
+            { "rpc.aggregate": "delivery" },
+          ),
+        [WS_METHODS.deliverySaveDeploymentEnvironment]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.deliverySaveDeploymentEnvironment,
+            delivery.saveDeploymentEnvironment(input),
+            { "rpc.aggregate": "delivery" },
+          ),
+        [WS_METHODS.deliveryAssessMerge]: (input) =>
+          observeRpcEffect(WS_METHODS.deliveryAssessMerge, delivery.assessMerge(input), {
+            "rpc.aggregate": "delivery",
+          }),
+        [WS_METHODS.deliveryRequestApproval]: (input) =>
+          observeRpcEffect(WS_METHODS.deliveryRequestApproval, delivery.requestApproval(input), {
+            "rpc.aggregate": "delivery",
+          }),
+        [WS_METHODS.deliveryDecideApproval]: (input) =>
+          observeRpcEffect(WS_METHODS.deliveryDecideApproval, delivery.decideApproval(input), {
+            "rpc.aggregate": "delivery",
+          }),
+        [WS_METHODS.deliveryExecuteMerge]: (input) =>
+          observeRpcEffect(WS_METHODS.deliveryExecuteMerge, delivery.executeMerge(input), {
+            "rpc.aggregate": "delivery",
+          }),
+        [WS_METHODS.deliveryProposeReleasePlan]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.deliveryProposeReleasePlan,
+            delivery.proposeReleasePlan(input),
+            { "rpc.aggregate": "delivery" },
+          ),
+        [WS_METHODS.deliverySaveReleasePlan]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.deliverySaveReleasePlan,
+            delivery.saveReleasePlan(input.plan),
+            { "rpc.aggregate": "delivery" },
+          ),
+        [WS_METHODS.deliveryPublishRelease]: (input) =>
+          observeRpcEffect(WS_METHODS.deliveryPublishRelease, delivery.publishRelease(input), {
+            "rpc.aggregate": "delivery",
+          }),
+        [WS_METHODS.deliveryProposeDeploymentPlan]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.deliveryProposeDeploymentPlan,
+            delivery.proposeDeploymentPlan(input),
+            { "rpc.aggregate": "delivery" },
+          ),
+        [WS_METHODS.deliverySaveDeploymentPlan]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.deliverySaveDeploymentPlan,
+            delivery.saveDeploymentPlan(input.plan),
+            { "rpc.aggregate": "delivery" },
+          ),
+        [WS_METHODS.deliveryExecuteDeployment]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.deliveryExecuteDeployment,
+            delivery.executeDeployment(input),
+            { "rpc.aggregate": "delivery" },
+          ),
+        [WS_METHODS.deliveryCancelDeployment]: (input) =>
+          observeRpcEffect(WS_METHODS.deliveryCancelDeployment, delivery.cancelDeployment(input), {
+            "rpc.aggregate": "delivery",
+          }),
+        [WS_METHODS.deliverySaveRollbackPlan]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.deliverySaveRollbackPlan,
+            delivery.saveRollbackPlan(input.plan),
+            { "rpc.aggregate": "delivery" },
+          ),
+        [WS_METHODS.deliveryExecuteRollback]: (input) =>
+          observeRpcEffect(WS_METHODS.deliveryExecuteRollback, delivery.executeRollback(input), {
+            "rpc.aggregate": "delivery",
+          }),
+        [WS_METHODS.deliverySubscribeWorkspace]: (input) =>
+          observeRpcStream(
+            WS_METHODS.deliverySubscribeWorkspace,
+            Stream.concat(
+              Stream.fromEffect(delivery.getWorkspace(input.projectId)),
+              delivery.changes.pipe(
+                Stream.filter((change) => change.projectId === input.projectId),
+                Stream.mapEffect(() => delivery.getWorkspace(input.projectId)),
+              ),
+            ),
+            { "rpc.aggregate": "delivery" },
           ),
         [WS_METHODS.subscribeVcsStatus]: (input) =>
           observeRpcStream(

@@ -3681,6 +3681,38 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "delivery.event.record": {
+      const project = yield* requireProject({
+        readModel,
+        command,
+        projectId: command.payload.projectId,
+      });
+      const mission =
+        command.payload.missionId === null
+          ? null
+          : yield* requireMission({
+              readModel,
+              command,
+              missionId: command.payload.missionId,
+            });
+      if (mission !== null && mission.projectId !== project.id) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Delivery event '${command.eventType}' has a mismatched mission and project.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "delivery",
+          aggregateId: command.aggregateId,
+          occurredAt: command.occurredAt,
+          commandId: command.commandId,
+        })),
+        type: command.eventType,
+        payload: command.payload,
+      };
+    }
+
     case "mission.agent-run.mark-running": {
       const run = yield* requireAgentRun({
         readModel,

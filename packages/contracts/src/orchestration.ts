@@ -97,6 +97,11 @@ import {
   AnalyticsEventReferencePayload,
   AnalyticsOrchestrationEventType,
 } from "./analytics.ts";
+import {
+  DeliveryAggregateId,
+  DeliveryEventReferencePayload,
+  DeliveryOrchestrationEventType,
+} from "./delivery.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -1752,6 +1757,15 @@ export const AnalyticsEventRecordCommand = Schema.Struct({
   occurredAt: IsoDateTime,
 });
 
+export const DeliveryEventRecordCommand = Schema.Struct({
+  type: Schema.Literal("delivery.event.record"),
+  commandId: CommandId,
+  aggregateId: DeliveryAggregateId,
+  eventType: DeliveryOrchestrationEventType,
+  payload: DeliveryEventReferencePayload,
+  occurredAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -1791,6 +1805,7 @@ const InternalOrchestrationCommand = Schema.Union([
   MemoryEventRecordCommand,
   RoutingEventRecordCommand,
   AnalyticsEventRecordCommand,
+  DeliveryEventRecordCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -2049,6 +2064,57 @@ export const OrchestrationEventType = Schema.Literals([
   "analytics.retention_started",
   "analytics.retention_completed",
   "analytics.retention_failed",
+  "delivery.readiness_requested",
+  "delivery.readiness_completed",
+  "delivery.readiness_invalidated",
+  "delivery.blocked",
+  "approval.requested",
+  "approval.approved",
+  "approval.rejected",
+  "approval.expired",
+  "approval.cancelled",
+  "approval.superseded",
+  "merge.requested",
+  "merge.started",
+  "merge.completed",
+  "merge.failed",
+  "merge.cancelled",
+  "merge.stale",
+  "merge.branch_cleanup_requested",
+  "merge.branch_cleaned",
+  "release.plan_created",
+  "release.plan_updated",
+  "release.approval_requested",
+  "release.approved",
+  "release.build_started",
+  "release.artifact_created",
+  "release.artifact_failed",
+  "release.tag_created",
+  "release.publication_started",
+  "release.published",
+  "release.failed",
+  "release.cancelled",
+  "deployment.environment_created",
+  "deployment.plan_created",
+  "deployment.approval_requested",
+  "deployment.started",
+  "deployment.provider_status_changed",
+  "deployment.validation_started",
+  "deployment.validation_passed",
+  "deployment.validation_failed",
+  "deployment.succeeded",
+  "deployment.failed",
+  "deployment.cancelled",
+  "deployment.interrupted",
+  "rollback.plan_created",
+  "rollback.approval_requested",
+  "rollback.started",
+  "rollback.validation_started",
+  "rollback.completed",
+  "rollback.failed",
+  "delivery.freeze_started",
+  "delivery.freeze_ended",
+  "delivery.override_applied",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -2059,6 +2125,7 @@ export const OrchestrationAggregateKind = Schema.Literals([
   "memory",
   "routing",
   "analytics",
+  "delivery",
 ]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
@@ -2634,6 +2701,7 @@ const EventBaseFields = {
     MemoryAggregateId,
     RoutingAggregateId,
     AnalyticsAggregateId,
+    DeliveryAggregateId,
   ]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
@@ -3217,6 +3285,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: AnalyticsOrchestrationEventType,
     payload: AnalyticsEventReferencePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: DeliveryOrchestrationEventType,
+    payload: DeliveryEventReferencePayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;

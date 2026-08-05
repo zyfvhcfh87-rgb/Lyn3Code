@@ -1,8 +1,19 @@
+import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
+  DeliveryApprovalRequestId,
+  DeliveryPolicyId,
+  DeploymentEnvironmentId,
+  DeploymentExecutionId,
+  DeploymentPlanId,
   EnvironmentId,
+  MergeReadinessAssessmentId,
   MissionId,
+  ProjectId,
+  ReleasePlanId,
+  ReleaseConfigurationId,
+  RollbackPlanId,
   type AgentPermission,
   type AgentRoleKind,
   type ManagedWorktree,
@@ -12,10 +23,15 @@ import {
   type MissionTeamSettings,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { ArrowLeftIcon, CircleAlertIcon } from "lucide-react";
 import { useState } from "react";
 
 import type { CreateMissionTaskInput } from "../components/missions/CreateTaskDialog";
+import type {
+  DeploymentPlanProposalContext,
+  ReleasePlanProposalContext,
+} from "../components/delivery/deliveryActions";
 import type {
   CreateMissionAgentDraft,
   UpdateMissionAgentDraft,
@@ -32,6 +48,7 @@ import { isMissionEnvironmentUnavailable } from "../lib/missionConnection";
 import { newMissionAgentId, newMissionTaskId, newTaskDependencyId } from "../lib/missionIds";
 import { deriveProviderInstanceEntries, isProviderInstancePickerReady } from "../providerInstances";
 import { useProjects, useServerConfigs } from "../state/entities";
+import { deliveryEnvironment } from "../state/delivery";
 import { useEnvironment, useEnvironments } from "../state/environments";
 import { missionEnvironment, useMissionDetailState } from "../state/missions";
 import { routingEnvironment } from "../state/routing";
@@ -114,9 +131,44 @@ function MissionDetailRoute() {
   const requestVerification = useAtomCommand(verificationEnvironment.request, {
     reportFailure: false,
   });
+  const requestDeliveryApproval = useAtomCommand(deliveryEnvironment.requestApproval, {
+    reportFailure: false,
+  });
+  const decideDeliveryApproval = useAtomCommand(deliveryEnvironment.decideApproval, {
+    reportFailure: false,
+  });
+  const executeDeliveryMerge = useAtomCommand(deliveryEnvironment.executeMerge, {
+    reportFailure: false,
+  });
+  const proposeDeliveryRelease = useAtomCommand(deliveryEnvironment.proposeReleasePlan, {
+    reportFailure: false,
+  });
+  const publishDeliveryRelease = useAtomCommand(deliveryEnvironment.publishRelease, {
+    reportFailure: false,
+  });
+  const proposeDeliveryDeployment = useAtomCommand(deliveryEnvironment.proposeDeploymentPlan, {
+    reportFailure: false,
+  });
+  const executeDeliveryDeployment = useAtomCommand(deliveryEnvironment.executeDeployment, {
+    reportFailure: false,
+  });
+  const cancelDeliveryDeployment = useAtomCommand(deliveryEnvironment.cancelDeployment, {
+    reportFailure: false,
+  });
+  const executeDeliveryRollback = useAtomCommand(deliveryEnvironment.executeRollback, {
+    reportFailure: false,
+  });
 
   const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(() => new Set());
   const snapshot = Option.getOrNull(detailState.snapshot);
+  const deliveryProjectId = snapshot?.mission.projectId ?? ProjectId.make("delivery-unavailable");
+  const deliveryResult = useAtomValue(
+    deliveryEnvironment.workspaceSubscriptionAtom({
+      environmentId,
+      input: { projectId: deliveryProjectId },
+    }),
+  );
+  const deliverySnapshot = Option.getOrNull(AsyncResult.value(deliveryResult));
   const streamError = Option.getOrNull(detailState.error);
   const project = snapshot
     ? (projects.find(
@@ -142,6 +194,7 @@ function MissionDetailRoute() {
   const missionTerminal =
     snapshot?.mission.status === "completed" || snapshot?.mission.status === "cancelled";
   const canMutate = connected && live && !missionTerminal;
+  const canOperateDelivery = connected && live;
 
   const runAction = async (
     key: string,
@@ -556,6 +609,209 @@ function MissionDetailRoute() {
     );
   };
 
+  const handleRequestDeliveryApproval = async (targetId: string, reason: string) => {
+    if (!deliverySnapshot) return;
+    const assessment = deliverySnapshot.mergeReadinessAssessments.find(
+      (candidate) => candidate.id === targetId,
+    );
+    if (!assessment) return;
+    const policy = deliverySnapshot.policies.find(
+      (candidate) => candidate.id === assessment.deliveryPolicyId,
+    );
+    if (!policy) return;
+    await runAction(
+      `delivery:approval:${targetId}`,
+      "Failed to request delivery approval",
+      () =>
+        requestDeliveryApproval({
+          environmentId,
+          input: {
+            projectId: assessment.projectId,
+            missionId: assessment.missionId,
+            policyId: assessment.deliveryPolicyId,
+            approvalType: "merge",
+            targetType: "merge_readiness_assessment",
+            targetId: assessment.id,
+            planDigest: assessment.policyDigest,
+            sourceCommit: assessment.sourceCommit,
+            requiredDecisionCount: Math.max(1, policy.mergePolicy.requiredApprovalCount),
+            policySnapshot: {
+              policyDigest: policy.policyDigest,
+              policyVersion: policy.version,
+              requiredApprovals: policy.mergePolicy.requiredApprovalCount,
+            },
+            contextSnapshot: {
+              readiness: assessment.result,
+              sourceFingerprint: assessment.sourceFingerprint,
+              reason,
+            },
+            requestedBy: "user",
+            expiresAt: assessment.expiresAt,
+          },
+        }),
+      "Approval requested",
+    );
+  };
+
+  const handleDecideDeliveryApproval = async (
+    targetId: string,
+    decision: "approve" | "reject",
+    reason: string,
+  ) => {
+    await runAction(
+      `delivery:decision:${targetId}`,
+      `Failed to ${decision} delivery approval`,
+      () =>
+        decideDeliveryApproval({
+          environmentId,
+          input: {
+            approvalRequestId: DeliveryApprovalRequestId.make(targetId),
+            decision,
+            actorType: "user",
+            actorId: "user",
+            reason: reason.trim().length > 0 ? reason : null,
+            decidedAt: new Date().toISOString(),
+          },
+        }),
+      decision === "approve" ? "Delivery approved" : "Delivery rejected",
+    );
+  };
+
+  const handleExecuteDeliveryMerge = async (targetId: string) => {
+    await runAction(
+      `delivery:merge:${targetId}`,
+      "Failed to execute controlled merge",
+      () =>
+        executeDeliveryMerge({
+          environmentId,
+          input: {
+            readinessAssessmentId: MergeReadinessAssessmentId.make(targetId),
+            requestedBy: "user",
+          },
+        }),
+      "Merge completed",
+    );
+  };
+
+  const handlePublishDeliveryRelease = async (targetId: string) => {
+    if (!deliverySnapshot) return;
+    const plan = deliverySnapshot.releasePlans.find((candidate) => candidate.id === targetId);
+    const connection = deliverySnapshot.mergeReadinessAssessments.at(-1)?.repositoryConnectionId;
+    if (!plan || !connection) {
+      toastManager.add({
+        type: "error",
+        title: "Release repository unavailable",
+        description: "A source-bound GitHub repository assessment is required before publication.",
+      });
+      return;
+    }
+    await runAction(
+      `delivery:release:${targetId}`,
+      "Failed to publish release",
+      () =>
+        publishDeliveryRelease({
+          environmentId,
+          input: {
+            releasePlanId: ReleasePlanId.make(targetId),
+            repositoryConnectionId: connection,
+            draft: plan.publicationPlan.draft !== false,
+            prerelease: plan.publicationPlan.prerelease === true,
+          },
+        }),
+      "Release published",
+    );
+  };
+
+  const handleProposeDeliveryRelease = async (context: ReleasePlanProposalContext) => {
+    if (!snapshot) return;
+    await runAction(
+      `delivery:release-proposal:${context.releaseConfigurationId}`,
+      "Failed to propose release plan",
+      () =>
+        proposeDeliveryRelease({
+          environmentId,
+          input: {
+            projectId: snapshot.mission.projectId,
+            missionId,
+            releaseConfigurationId: ReleaseConfigurationId.make(context.releaseConfigurationId),
+            deliveryPolicyId: DeliveryPolicyId.make(context.deliveryPolicyId),
+            bump: context.bump,
+            requestedVersion: context.requestedVersion,
+            releaseNotesSupplement: context.releaseNotesSupplement,
+            requestedBy: "user",
+          },
+        }),
+      "Release plan proposed",
+    );
+  };
+
+  const handleProposeDeliveryDeployment = async (context: DeploymentPlanProposalContext) => {
+    if (!snapshot) return;
+    await runAction(
+      `delivery:deployment-proposal:${context.deploymentEnvironmentId}`,
+      "Failed to propose deployment plan",
+      () =>
+        proposeDeliveryDeployment({
+          environmentId,
+          input: {
+            projectId: snapshot.mission.projectId,
+            missionId,
+            releasePlanId:
+              context.releasePlanId === null ? null : ReleasePlanId.make(context.releasePlanId),
+            deploymentEnvironmentId: DeploymentEnvironmentId.make(context.deploymentEnvironmentId),
+            deliveryPolicyId: DeliveryPolicyId.make(context.deliveryPolicyId),
+            strategy: context.strategy,
+            validationProfileId: null,
+            requestedBy: "user",
+          },
+        }),
+      "Deployment plan proposed",
+    );
+  };
+
+  const handleExecuteDeliveryDeployment = async (targetId: string) => {
+    await runAction(
+      `delivery:deployment:${targetId}`,
+      "Failed to execute deployment",
+      () =>
+        executeDeliveryDeployment({
+          environmentId,
+          input: { deploymentPlanId: DeploymentPlanId.make(targetId), requestedBy: "user" },
+        }),
+      "Deployment finished",
+    );
+  };
+
+  const handleCancelDeliveryDeployment = async (targetId: string, reason: string) => {
+    await runAction(
+      `delivery:deployment-cancel:${targetId}`,
+      "Failed to cancel deployment",
+      () =>
+        cancelDeliveryDeployment({
+          environmentId,
+          input: {
+            deploymentExecutionId: DeploymentExecutionId.make(targetId),
+            requestedBy: "user",
+            reason,
+          },
+        }),
+      "Deployment cancellation confirmed",
+    );
+  };
+
+  const handleExecuteDeliveryRollback = async (targetId: string) => {
+    await runAction(
+      `delivery:rollback:${targetId}`,
+      "Failed to execute rollback",
+      () =>
+        executeDeliveryRollback({
+          environmentId,
+          input: { rollbackPlanId: RollbackPlanId.make(targetId), requestedBy: "user" },
+        }),
+      "Rollback finished",
+    );
+  };
+
   const handleRemoveWorktree = async (worktreeId: ManagedWorktreeId) => {
     await runAction(
       `worktree:${worktreeId}`,
@@ -695,6 +951,31 @@ function MissionDetailRoute() {
         managedWorktrees={snapshot.managedWorktrees}
         agentHandoffs={snapshot.agentHandoffs}
         events={snapshot.events}
+        delivery={
+          deliverySnapshot === null || deliverySnapshot.projectId !== snapshot.mission.projectId
+            ? undefined
+            : {
+                state: "ready",
+                snapshot: deliverySnapshot,
+                actions: canOperateDelivery
+                  ? {
+                      onRequestApproval: ({ targetId, reason }) =>
+                        handleRequestDeliveryApproval(targetId, reason),
+                      onDecideApproval: ({ targetId, decision, reason }) =>
+                        handleDecideDeliveryApproval(targetId, decision, reason),
+                      onExecuteMerge: ({ targetId }) => handleExecuteDeliveryMerge(targetId),
+                      onCreateReleasePlan: handleProposeDeliveryRelease,
+                      onExecuteRelease: ({ targetId }) => handlePublishDeliveryRelease(targetId),
+                      onCreateDeploymentPlan: handleProposeDeliveryDeployment,
+                      onExecuteDeployment: ({ targetId }) =>
+                        handleExecuteDeliveryDeployment(targetId),
+                      onCancelDeployment: ({ targetId, reason }) =>
+                        handleCancelDeliveryDeployment(targetId, reason),
+                      onExecuteRollback: ({ targetId }) => handleExecuteDeliveryRollback(targetId),
+                    }
+                  : undefined,
+              }
+        }
         providerChoices={providerChoices}
         canMutate={canMutate}
         providerReady={providerChoices.length > 0}

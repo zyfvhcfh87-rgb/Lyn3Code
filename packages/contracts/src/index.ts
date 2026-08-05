@@ -26,6 +26,7 @@ export * from "./memory.ts";
 export * from "./routing.ts";
 export * from "./routingRpc.ts";
 export * from "./analytics.ts";
+export * from "./delivery.ts";
 export * from "./t3ProjectFile.ts";
 export * from "./editor.ts";
 export * from "./project.ts";

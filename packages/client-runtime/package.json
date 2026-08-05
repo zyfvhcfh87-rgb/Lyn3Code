@@ -55,6 +55,10 @@
       "types": "./src/state/connections.ts",
       "default": "./src/state/connections.ts"
     },
+    "./state/delivery": {
+      "types": "./src/state/delivery.ts",
+      "default": "./src/state/delivery.ts"
+    },
     "./state/entities": {
       "types": "./src/state/entities.ts",
       "default": "./src/state/entities.ts"
