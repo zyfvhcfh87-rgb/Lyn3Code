@@ -4,6 +4,7 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/providers"
   | "/settings/routing"
+  | "/settings/analytics"
   | "/settings/source-control"
   | "/settings/verification"
   | "/settings/connections"
@@ -27,6 +28,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
   "/settings/routing": "Routing",
+  "/settings/analytics": "Analytics",
   "/settings/source-control": "Source Control",
   "/settings/verification": "Verification",
   "/settings/connections": "Connections",
@@ -179,6 +181,46 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "routing-simulator",
     title: "Routing simulator",
     to: "/settings/routing",
+  },
+  {
+    id: "analytics-overview",
+    title: "Analytics overview",
+    to: "/settings/analytics",
+  },
+  {
+    id: "analytics-costs",
+    title: "Cost and data quality",
+    to: "/settings/analytics",
+  },
+  {
+    id: "analytics-comparisons",
+    title: "Analytics comparisons",
+    to: "/settings/analytics",
+  },
+  {
+    id: "analytics-forecasts",
+    title: "Analytics forecasts",
+    to: "/settings/analytics",
+  },
+  {
+    id: "analytics-budgets",
+    title: "Analytics budgets",
+    to: "/settings/analytics",
+  },
+  {
+    id: "analytics-alerts",
+    title: "Analytics alerts",
+    to: "/settings/analytics",
+  },
+  {
+    id: "analytics-recommendations",
+    title: "Analytics recommendations",
+    to: "/settings/analytics",
+  },
+  {
+    id: "analytics-operations",
+    title: "Analytics exports and retention",
+    to: "/settings/analytics",
   },
   {
     id: "source-control",

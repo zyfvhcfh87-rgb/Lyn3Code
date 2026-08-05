@@ -43,6 +43,10 @@
       "types": "./src/state/auth.ts",
       "default": "./src/state/auth.ts"
     },
+    "./state/analytics": {
+      "types": "./src/state/analytics.ts",
+      "default": "./src/state/analytics.ts"
+    },
     "./state/assets": {
       "types": "./src/state/assets.ts",
       "default": "./src/state/assets.ts"

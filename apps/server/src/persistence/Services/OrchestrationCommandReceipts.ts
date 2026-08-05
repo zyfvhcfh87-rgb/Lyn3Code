@@ -8,6 +8,7 @@
  */
 import {
   CommandId,
+  AnalyticsAggregateId,
   IsoDateTime,
   MemoryAggregateId,
   MissionId,
@@ -34,6 +35,7 @@ export const OrchestrationCommandReceipt = Schema.Struct({
     MissionId,
     MemoryAggregateId,
     RoutingAggregateId,
+    AnalyticsAggregateId,
   ]),
   acceptedAt: IsoDateTime,
   resultSequence: NonNegativeInt,

@@ -266,6 +266,40 @@ import {
   RoutingWorkspaceSnapshot,
 } from "./routingRpc.ts";
 import {
+  AnalyticsAggregateRebuildInput,
+  AnalyticsAlert,
+  AnalyticsAlertAcknowledgeInput,
+  AnalyticsAnnotation,
+  AnalyticsAnnotationSaveInput,
+  AnalyticsExport,
+  AnalyticsExportCreateInput,
+  AnalyticsFilterInput,
+  AnalyticsNotFoundError,
+  AnalyticsRetentionOperation,
+  AnalyticsRetentionStartInput,
+  AnalyticsRunDetail,
+  AnalyticsRunDetailInput,
+  AnalyticsSettings,
+  AnalyticsSettingsUpdateInput,
+  AnalyticsUnavailableError,
+  AnalyticsValidationError,
+  AnalyticsWorkspaceSnapshot,
+  BudgetEvent,
+  BudgetEventAcknowledgeInput,
+  BudgetOverride,
+  BudgetOverrideCreateInput,
+  BudgetPolicy,
+  BudgetPolicySaveInput,
+  HumanDispositionRecord,
+  HumanDispositionRecordInput,
+  ExchangeRateSnapshot,
+  ExchangeRateSnapshotSaveInput,
+  PricingSnapshot,
+  PricingSnapshotSaveInput,
+  SubscriptionAttributionRule,
+  SubscriptionAttributionRuleSaveInput,
+} from "./analytics.ts";
+import {
   MissionTaskId,
   MissionId,
   MissionAgentId,
@@ -364,6 +398,24 @@ export const WS_METHODS = {
   routingSaveCapabilitySnapshot: "routing.saveCapabilitySnapshot",
   routingRefreshRegistry: "routing.refreshRegistry",
   routingSubscribeWorkspace: "routing.subscribeWorkspace",
+
+  // Usage, cost, performance, and outcome analytics
+  analyticsGetWorkspace: "analytics.getWorkspace",
+  analyticsGetRunDetail: "analytics.getRunDetail",
+  analyticsUpdateSettings: "analytics.updateSettings",
+  analyticsSaveBudget: "analytics.saveBudget",
+  analyticsSavePricingSnapshot: "analytics.savePricingSnapshot",
+  analyticsSaveSubscriptionAttributionRule: "analytics.saveSubscriptionAttributionRule",
+  analyticsSaveExchangeRateSnapshot: "analytics.saveExchangeRateSnapshot",
+  analyticsAcknowledgeBudgetEvent: "analytics.acknowledgeBudgetEvent",
+  analyticsCreateBudgetOverride: "analytics.createBudgetOverride",
+  analyticsAcknowledgeAlert: "analytics.acknowledgeAlert",
+  analyticsSaveAnnotation: "analytics.saveAnnotation",
+  analyticsRecordHumanDisposition: "analytics.recordHumanDisposition",
+  analyticsCreateExport: "analytics.createExport",
+  analyticsStartRetention: "analytics.startRetention",
+  analyticsRebuildAggregates: "analytics.rebuildAggregates",
+  analyticsSubscribeWorkspace: "analytics.subscribeWorkspace",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -1235,6 +1287,125 @@ export const WsRoutingSubscribeWorkspaceRpc = Rpc.make(WS_METHODS.routingSubscri
   stream: true,
 });
 
+const UsageAnalyticsRpcErrorSchema = Schema.Union([
+  AnalyticsValidationError,
+  AnalyticsNotFoundError,
+  AnalyticsUnavailableError,
+  EnvironmentAuthorizationError,
+]);
+
+export const WsAnalyticsGetWorkspaceRpc = Rpc.make(WS_METHODS.analyticsGetWorkspace, {
+  payload: AnalyticsFilterInput,
+  success: AnalyticsWorkspaceSnapshot,
+  error: UsageAnalyticsRpcErrorSchema,
+});
+
+export const WsAnalyticsGetRunDetailRpc = Rpc.make(WS_METHODS.analyticsGetRunDetail, {
+  payload: AnalyticsRunDetailInput,
+  success: AnalyticsRunDetail,
+  error: UsageAnalyticsRpcErrorSchema,
+});
+
+export const WsAnalyticsUpdateSettingsRpc = Rpc.make(WS_METHODS.analyticsUpdateSettings, {
+  payload: AnalyticsSettingsUpdateInput,
+  success: AnalyticsSettings,
+  error: UsageAnalyticsRpcErrorSchema,
+});
+
+export const WsAnalyticsSaveBudgetRpc = Rpc.make(WS_METHODS.analyticsSaveBudget, {
+  payload: BudgetPolicySaveInput,
+  success: BudgetPolicy,
+  error: UsageAnalyticsRpcErrorSchema,
+});
+
+export const WsAnalyticsSavePricingSnapshotRpc = Rpc.make(WS_METHODS.analyticsSavePricingSnapshot, {
+  payload: PricingSnapshotSaveInput,
+  success: PricingSnapshot,
+  error: UsageAnalyticsRpcErrorSchema,
+});
+
+export const WsAnalyticsSaveSubscriptionAttributionRuleRpc = Rpc.make(
+  WS_METHODS.analyticsSaveSubscriptionAttributionRule,
+  {
+    payload: SubscriptionAttributionRuleSaveInput,
+    success: SubscriptionAttributionRule,
+    error: UsageAnalyticsRpcErrorSchema,
+  },
+);
+
+export const WsAnalyticsSaveExchangeRateSnapshotRpc = Rpc.make(
+  WS_METHODS.analyticsSaveExchangeRateSnapshot,
+  {
+    payload: ExchangeRateSnapshotSaveInput,
+    success: ExchangeRateSnapshot,
+    error: UsageAnalyticsRpcErrorSchema,
+  },
+);
+
+export const WsAnalyticsAcknowledgeBudgetEventRpc = Rpc.make(
+  WS_METHODS.analyticsAcknowledgeBudgetEvent,
+  {
+    payload: BudgetEventAcknowledgeInput,
+    success: BudgetEvent,
+    error: UsageAnalyticsRpcErrorSchema,
+  },
+);
+
+export const WsAnalyticsCreateBudgetOverrideRpc = Rpc.make(
+  WS_METHODS.analyticsCreateBudgetOverride,
+  {
+    payload: BudgetOverrideCreateInput,
+    success: BudgetOverride,
+    error: UsageAnalyticsRpcErrorSchema,
+  },
+);
+
+export const WsAnalyticsAcknowledgeAlertRpc = Rpc.make(WS_METHODS.analyticsAcknowledgeAlert, {
+  payload: AnalyticsAlertAcknowledgeInput,
+  success: AnalyticsAlert,
+  error: UsageAnalyticsRpcErrorSchema,
+});
+
+export const WsAnalyticsSaveAnnotationRpc = Rpc.make(WS_METHODS.analyticsSaveAnnotation, {
+  payload: AnalyticsAnnotationSaveInput,
+  success: AnalyticsAnnotation,
+  error: UsageAnalyticsRpcErrorSchema,
+});
+
+export const WsAnalyticsRecordHumanDispositionRpc = Rpc.make(
+  WS_METHODS.analyticsRecordHumanDisposition,
+  {
+    payload: HumanDispositionRecordInput,
+    success: HumanDispositionRecord,
+    error: UsageAnalyticsRpcErrorSchema,
+  },
+);
+
+export const WsAnalyticsCreateExportRpc = Rpc.make(WS_METHODS.analyticsCreateExport, {
+  payload: AnalyticsExportCreateInput,
+  success: AnalyticsExport,
+  error: UsageAnalyticsRpcErrorSchema,
+});
+
+export const WsAnalyticsStartRetentionRpc = Rpc.make(WS_METHODS.analyticsStartRetention, {
+  payload: AnalyticsRetentionStartInput,
+  success: AnalyticsRetentionOperation,
+  error: UsageAnalyticsRpcErrorSchema,
+});
+
+export const WsAnalyticsRebuildAggregatesRpc = Rpc.make(WS_METHODS.analyticsRebuildAggregates, {
+  payload: AnalyticsAggregateRebuildInput,
+  success: Schema.Struct({ accepted: Schema.Boolean }),
+  error: UsageAnalyticsRpcErrorSchema,
+});
+
+export const WsAnalyticsSubscribeWorkspaceRpc = Rpc.make(WS_METHODS.analyticsSubscribeWorkspace, {
+  payload: AnalyticsFilterInput,
+  success: AnalyticsWorkspaceSnapshot,
+  error: UsageAnalyticsRpcErrorSchema,
+  stream: true,
+});
+
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusInput,
   success: VcsStatusStreamEvent,
@@ -1653,6 +1824,22 @@ export const WsRpcGroup = RpcGroup.make(
   WsRoutingSaveCapabilitySnapshotRpc,
   WsRoutingRefreshRegistryRpc,
   WsRoutingSubscribeWorkspaceRpc,
+  WsAnalyticsGetWorkspaceRpc,
+  WsAnalyticsGetRunDetailRpc,
+  WsAnalyticsUpdateSettingsRpc,
+  WsAnalyticsSaveBudgetRpc,
+  WsAnalyticsSavePricingSnapshotRpc,
+  WsAnalyticsSaveSubscriptionAttributionRuleRpc,
+  WsAnalyticsSaveExchangeRateSnapshotRpc,
+  WsAnalyticsAcknowledgeBudgetEventRpc,
+  WsAnalyticsCreateBudgetOverrideRpc,
+  WsAnalyticsAcknowledgeAlertRpc,
+  WsAnalyticsSaveAnnotationRpc,
+  WsAnalyticsRecordHumanDispositionRpc,
+  WsAnalyticsCreateExportRpc,
+  WsAnalyticsStartRetentionRpc,
+  WsAnalyticsRebuildAggregatesRpc,
+  WsAnalyticsSubscribeWorkspaceRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,

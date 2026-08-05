@@ -55,6 +55,7 @@ export class RoutingRpcError extends Schema.TaggedErrorClass<RoutingRpcError>()(
     "privacy_violation",
     "provider_unavailable",
     "concurrency_exhausted",
+    "budget_restricted",
     "cancelled",
     "persistence_error",
     "orchestration_error",
