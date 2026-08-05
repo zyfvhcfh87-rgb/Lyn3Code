@@ -109,6 +109,8 @@ function commandToAggregateRef(command: OrchestrationCommand): {
       return { aggregateKind: "routing", aggregateId: command.aggregateId };
     case "analytics.event.record":
       return { aggregateKind: "analytics", aggregateId: command.aggregateId };
+    case "delivery.event.record":
+      return { aggregateKind: "delivery", aggregateId: command.aggregateId };
     case "mission.create":
     case "mission.update":
     case "mission.task.create":

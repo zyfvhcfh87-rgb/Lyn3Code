@@ -300,6 +300,42 @@ import {
   SubscriptionAttributionRuleSaveInput,
 } from "./analytics.ts";
 import {
+  ApprovalDecisionResult,
+  ApprovalRequest,
+  AssessMergeInput,
+  CancelDeploymentInput,
+  DecideApprovalInput,
+  DeliveryConflictError,
+  DeliveryPolicy,
+  DeliveryPolicySaveInput,
+  DeliveryNotFoundError,
+  DeliveryUnavailableError,
+  DeliveryValidationError,
+  DeliveryWorkspaceInput,
+  DeliveryWorkspaceSnapshot,
+  DeploymentEnvironment,
+  DeploymentEnvironmentSaveInput,
+  DeploymentExecution,
+  DeploymentPlan,
+  DeploymentPlanSaveInput,
+  ProposeDeploymentPlanInput,
+  ProposeReleasePlanInput,
+  ExecuteDeploymentInput,
+  ExecuteMergeInput,
+  ExecuteRollbackInput,
+  MergeExecution,
+  MergeReadinessAssessment,
+  PublishReleaseInput,
+  ReleaseConfiguration,
+  ReleaseConfigurationSaveInput,
+  ReleasePlan,
+  ReleasePlanSaveInput,
+  RequestApprovalInput,
+  RollbackExecution,
+  RollbackPlan,
+  RollbackPlanSaveInput,
+} from "./delivery.ts";
+import {
   MissionTaskId,
   MissionId,
   MissionAgentId,
@@ -416,6 +452,26 @@ export const WS_METHODS = {
   analyticsStartRetention: "analytics.startRetention",
   analyticsRebuildAggregates: "analytics.rebuildAggregates",
   analyticsSubscribeWorkspace: "analytics.subscribeWorkspace",
+
+  // Controlled delivery, release, deployment, and rollback
+  deliveryGetWorkspace: "delivery.getWorkspace",
+  deliverySavePolicy: "delivery.savePolicy",
+  deliverySaveReleaseConfiguration: "delivery.saveReleaseConfiguration",
+  deliverySaveDeploymentEnvironment: "delivery.saveDeploymentEnvironment",
+  deliveryAssessMerge: "delivery.assessMerge",
+  deliveryRequestApproval: "delivery.requestApproval",
+  deliveryDecideApproval: "delivery.decideApproval",
+  deliveryExecuteMerge: "delivery.executeMerge",
+  deliveryProposeReleasePlan: "delivery.proposeReleasePlan",
+  deliverySaveReleasePlan: "delivery.saveReleasePlan",
+  deliveryPublishRelease: "delivery.publishRelease",
+  deliveryProposeDeploymentPlan: "delivery.proposeDeploymentPlan",
+  deliverySaveDeploymentPlan: "delivery.saveDeploymentPlan",
+  deliveryExecuteDeployment: "delivery.executeDeployment",
+  deliveryCancelDeployment: "delivery.cancelDeployment",
+  deliverySaveRollbackPlan: "delivery.saveRollbackPlan",
+  deliveryExecuteRollback: "delivery.executeRollback",
+  deliverySubscribeWorkspace: "delivery.subscribeWorkspace",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -1406,6 +1462,132 @@ export const WsAnalyticsSubscribeWorkspaceRpc = Rpc.make(WS_METHODS.analyticsSub
   stream: true,
 });
 
+const DeliveryRpcErrorSchema = Schema.Union([
+  DeliveryValidationError,
+  DeliveryNotFoundError,
+  DeliveryConflictError,
+  DeliveryUnavailableError,
+  EnvironmentAuthorizationError,
+]);
+
+export const WsDeliveryGetWorkspaceRpc = Rpc.make(WS_METHODS.deliveryGetWorkspace, {
+  payload: DeliveryWorkspaceInput,
+  success: DeliveryWorkspaceSnapshot,
+  error: DeliveryRpcErrorSchema,
+});
+
+export const WsDeliverySavePolicyRpc = Rpc.make(WS_METHODS.deliverySavePolicy, {
+  payload: DeliveryPolicySaveInput,
+  success: DeliveryPolicy,
+  error: DeliveryRpcErrorSchema,
+});
+
+export const WsDeliverySaveReleaseConfigurationRpc = Rpc.make(
+  WS_METHODS.deliverySaveReleaseConfiguration,
+  {
+    payload: ReleaseConfigurationSaveInput,
+    success: ReleaseConfiguration,
+    error: DeliveryRpcErrorSchema,
+  },
+);
+
+export const WsDeliverySaveDeploymentEnvironmentRpc = Rpc.make(
+  WS_METHODS.deliverySaveDeploymentEnvironment,
+  {
+    payload: DeploymentEnvironmentSaveInput,
+    success: DeploymentEnvironment,
+    error: DeliveryRpcErrorSchema,
+  },
+);
+
+export const WsDeliveryAssessMergeRpc = Rpc.make(WS_METHODS.deliveryAssessMerge, {
+  payload: AssessMergeInput,
+  success: MergeReadinessAssessment,
+  error: DeliveryRpcErrorSchema,
+});
+
+export const WsDeliveryRequestApprovalRpc = Rpc.make(WS_METHODS.deliveryRequestApproval, {
+  payload: RequestApprovalInput,
+  success: ApprovalRequest,
+  error: DeliveryRpcErrorSchema,
+});
+
+export const WsDeliveryDecideApprovalRpc = Rpc.make(WS_METHODS.deliveryDecideApproval, {
+  payload: DecideApprovalInput,
+  success: ApprovalDecisionResult,
+  error: DeliveryRpcErrorSchema,
+});
+
+export const WsDeliveryExecuteMergeRpc = Rpc.make(WS_METHODS.deliveryExecuteMerge, {
+  payload: ExecuteMergeInput,
+  success: MergeExecution,
+  error: DeliveryRpcErrorSchema,
+});
+
+export const WsDeliveryProposeReleasePlanRpc = Rpc.make(WS_METHODS.deliveryProposeReleasePlan, {
+  payload: ProposeReleasePlanInput,
+  success: ReleasePlan,
+  error: DeliveryRpcErrorSchema,
+});
+
+export const WsDeliverySaveReleasePlanRpc = Rpc.make(WS_METHODS.deliverySaveReleasePlan, {
+  payload: ReleasePlanSaveInput,
+  success: ReleasePlan,
+  error: DeliveryRpcErrorSchema,
+});
+
+export const WsDeliveryPublishReleaseRpc = Rpc.make(WS_METHODS.deliveryPublishRelease, {
+  payload: PublishReleaseInput,
+  success: ReleasePlan,
+  error: DeliveryRpcErrorSchema,
+});
+
+export const WsDeliveryProposeDeploymentPlanRpc = Rpc.make(
+  WS_METHODS.deliveryProposeDeploymentPlan,
+  {
+    payload: ProposeDeploymentPlanInput,
+    success: DeploymentPlan,
+    error: DeliveryRpcErrorSchema,
+  },
+);
+
+export const WsDeliverySaveDeploymentPlanRpc = Rpc.make(WS_METHODS.deliverySaveDeploymentPlan, {
+  payload: DeploymentPlanSaveInput,
+  success: DeploymentPlan,
+  error: DeliveryRpcErrorSchema,
+});
+
+export const WsDeliveryExecuteDeploymentRpc = Rpc.make(WS_METHODS.deliveryExecuteDeployment, {
+  payload: ExecuteDeploymentInput,
+  success: DeploymentExecution,
+  error: DeliveryRpcErrorSchema,
+});
+
+export const WsDeliveryCancelDeploymentRpc = Rpc.make(WS_METHODS.deliveryCancelDeployment, {
+  payload: CancelDeploymentInput,
+  success: DeploymentExecution,
+  error: DeliveryRpcErrorSchema,
+});
+
+export const WsDeliverySaveRollbackPlanRpc = Rpc.make(WS_METHODS.deliverySaveRollbackPlan, {
+  payload: RollbackPlanSaveInput,
+  success: RollbackPlan,
+  error: DeliveryRpcErrorSchema,
+});
+
+export const WsDeliveryExecuteRollbackRpc = Rpc.make(WS_METHODS.deliveryExecuteRollback, {
+  payload: ExecuteRollbackInput,
+  success: RollbackExecution,
+  error: DeliveryRpcErrorSchema,
+});
+
+export const WsDeliverySubscribeWorkspaceRpc = Rpc.make(WS_METHODS.deliverySubscribeWorkspace, {
+  payload: DeliveryWorkspaceInput,
+  success: DeliveryWorkspaceSnapshot,
+  error: DeliveryRpcErrorSchema,
+  stream: true,
+});
+
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusInput,
   success: VcsStatusStreamEvent,
@@ -1840,6 +2022,24 @@ export const WsRpcGroup = RpcGroup.make(
   WsAnalyticsStartRetentionRpc,
   WsAnalyticsRebuildAggregatesRpc,
   WsAnalyticsSubscribeWorkspaceRpc,
+  WsDeliveryGetWorkspaceRpc,
+  WsDeliverySavePolicyRpc,
+  WsDeliverySaveReleaseConfigurationRpc,
+  WsDeliverySaveDeploymentEnvironmentRpc,
+  WsDeliveryAssessMergeRpc,
+  WsDeliveryRequestApprovalRpc,
+  WsDeliveryDecideApprovalRpc,
+  WsDeliveryExecuteMergeRpc,
+  WsDeliveryProposeReleasePlanRpc,
+  WsDeliverySaveReleasePlanRpc,
+  WsDeliveryPublishReleaseRpc,
+  WsDeliveryProposeDeploymentPlanRpc,
+  WsDeliverySaveDeploymentPlanRpc,
+  WsDeliveryExecuteDeploymentRpc,
+  WsDeliveryCancelDeploymentRpc,
+  WsDeliverySaveRollbackPlanRpc,
+  WsDeliveryExecuteRollbackRpc,
+  WsDeliverySubscribeWorkspaceRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,

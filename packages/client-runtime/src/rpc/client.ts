@@ -58,6 +58,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.githubSubscribeWorkspace
   | typeof WS_METHODS.routingSubscribeWorkspace
   | typeof WS_METHODS.analyticsSubscribeWorkspace
+  | typeof WS_METHODS.deliverySubscribeWorkspace
   | typeof WS_METHODS.terminalAttach;
 
 export type EnvironmentStreamCommandRpcTag =

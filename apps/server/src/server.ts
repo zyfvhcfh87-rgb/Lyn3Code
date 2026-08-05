@@ -61,6 +61,7 @@ import { VerificationOrchestrationReactorLive } from "./orchestration/Layers/Ver
 import { ProjectionVerificationConfigurationRepositoryLive } from "./persistence/Layers/ProjectionVerificationConfiguration.ts";
 import { ProjectionVerificationRunRepositoryLive } from "./persistence/Layers/ProjectionVerificationRuns.ts";
 import { ProjectionGitHubWorkspaceRepositoryLive } from "./persistence/Layers/ProjectionGitHubWorkspace.ts";
+import { ProjectionDeliveryRepositoryLive } from "./persistence/Layers/ProjectionDelivery.ts";
 import { ProjectionMemoryRepositoryLive } from "./persistence/Layers/ProjectionMemory.ts";
 import { ProjectionRoutingRepositoryLive } from "./persistence/Layers/ProjectionRouting.ts";
 import { ProjectionUsageAnalyticsRepositoryLive } from "./persistence/Layers/ProjectionUsageAnalytics.ts";
@@ -83,6 +84,8 @@ import * as GitHubEventRecorder from "./github/GitHubEventRecorder.ts";
 import * as GitHubGitSafety from "./github/GitHubGitSafety.ts";
 import * as GitHubWorkspace from "./github/GitHubWorkspaceService.ts";
 import * as GitHubWorkflow from "./github/GitHubWorkflowService.ts";
+import * as DeliveryEventRecorder from "./delivery/DeliveryEventRecorder.ts";
+import * as DeliveryWorkspace from "./delivery/DeliveryWorkspaceService.ts";
 import { EmbeddingProviderDisabledLive } from "./memory/EmbeddingProvider.ts";
 import * as MemoryEmbeddingCoordinator from "./memory/MemoryEmbeddingCoordinator.ts";
 import {
@@ -333,6 +336,29 @@ const GitHubEnvironmentRuntimeLayerLive = Layer.mergeAll(
   ServerEnvironment.layer,
   GitHubRuntimeLayerLive,
 ).pipe(Layer.provideMerge(RepositoryIdentityResolver.layer));
+
+const DeliveryEventRecorderLayerLive = DeliveryEventRecorder.layer.pipe(
+  Layer.provide(OrchestrationLayerLive),
+);
+const DeliveryWorkspaceLayerLive = DeliveryWorkspace.layer.pipe(
+  Layer.provideMerge(ProjectionDeliveryRepositoryLive),
+  Layer.provideMerge(ProjectionGitHubWorkspaceRepositoryLive),
+  Layer.provideMerge(ProjectionProjectRepositoryLive),
+  Layer.provideMerge(GitHubEnvironmentRuntimeLayerLive),
+  Layer.provideMerge(VerificationRuntimeDependenciesLive),
+  Layer.provideMerge(DeliveryEventRecorderLayerLive),
+  Layer.provideMerge(RepositoryIdentityResolver.layer),
+);
+const DeliveryRecoveryLayerLive = Layer.effectDiscard(
+  DeliveryWorkspace.DeliveryWorkspaceService.pipe(
+    Effect.flatMap((service) => service.recoverInterrupted()),
+  ),
+).pipe(Layer.provide(DeliveryWorkspaceLayerLive));
+const DeliveryRuntimeLayerLive = Layer.mergeAll(
+  ProjectionDeliveryRepositoryLive,
+  DeliveryWorkspaceLayerLive,
+  DeliveryRecoveryLayerLive,
+);
 
 const MemoryEventRecorderLayerLive = MemoryEventRecorder.layer.pipe(
   Layer.provide(OrchestrationLayerLive),
@@ -625,9 +651,9 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // no longer transitively provides it. Exposing it at the runtime level
   // keeps a single Live for all opencode consumers.
   Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
-  Layer.provideMerge(WorkspaceLayerLive),
-  Layer.provideMerge(ProjectFaviconResolverLayerLive),
+  Layer.provideMerge(Layer.mergeAll(WorkspaceLayerLive, ProjectFaviconResolverLayerLive)),
   Layer.provideMerge(GitHubEnvironmentRuntimeLayerLive),
+  Layer.provideMerge(DeliveryRuntimeLayerLive),
   Layer.provideMerge(Layer.mergeAll(AuthLayerLive, ServerSecretStore.layer)),
   Layer.provideMerge(
     Layer.mergeAll(

@@ -16,10 +16,14 @@ const output = (stdout: string, exitCode = 0): VcsProcess.VcsProcessOutput => ({
 });
 
 const executeApi = vi.fn<GitHubCli.GitHubCli["Service"]["executeApi"]>();
-const layer = GitHubApi.layer.pipe(Layer.provide(Layer.mock(GitHubCli.GitHubCli)({ executeApi })));
+const execute = vi.fn<GitHubCli.GitHubCli["Service"]["execute"]>();
+const layer = GitHubApi.layer.pipe(
+  Layer.provide(Layer.mock(GitHubCli.GitHubCli)({ executeApi, execute })),
+);
 
 afterEach(() => {
   executeApi.mockReset();
+  execute.mockReset();
 });
 
 describe("GitHubApiClient", () => {
@@ -424,6 +428,164 @@ describe("GitHubApiClient", () => {
         summary: "All tests passed",
       });
       assert.strictEqual(result.data.pageInfo.totalCount, 1);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("preserves branch-protection requirements as authoritative evidence", () => {
+    executeApi.mockReturnValueOnce(
+      Effect.succeed(
+        output(
+          [
+            "HTTP/2.0 200 OK",
+            "",
+            JSON.stringify({
+              required_status_checks: {
+                strict: true,
+                contexts: ["tests"],
+                checks: [{ context: "lint", app_id: 42 }],
+              },
+              required_pull_request_reviews: {
+                required_approving_review_count: 2,
+                dismiss_stale_reviews: true,
+                require_code_owner_reviews: true,
+                require_last_push_approval: true,
+              },
+              required_conversation_resolution: { enabled: true },
+              required_linear_history: { enabled: true },
+              required_signatures: { enabled: true },
+              enforce_admins: { enabled: true },
+              allow_force_pushes: { enabled: false },
+              allow_deletions: { enabled: false },
+            }),
+          ].join("\n"),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const github = yield* GitHubApi.GitHubApiClient;
+      const result = yield* github.getBranchProtection({
+        cwd: "/repo",
+        hostname: "github.com",
+        owner: "acme",
+        repository: "widgets",
+        branch: "main",
+      });
+
+      assert.isFalse(result.notModified);
+      if (result.notModified) return;
+      assert.deepStrictEqual(result.data, {
+        protected: true,
+        requiredStatusChecks: { strict: true, contexts: ["tests", "lint"] },
+        requiredApprovingReviewCount: 2,
+        dismissStaleReviews: true,
+        requireCodeOwnerReviews: true,
+        requireLastPushApproval: true,
+        requireConversationResolution: true,
+        requireLinearHistory: true,
+        requireSignedCommits: true,
+        enforceAdmins: true,
+        allowForcePushes: false,
+        allowDeletions: false,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("merges only the expected head with the explicitly selected strategy", () => {
+    executeApi.mockReturnValueOnce(
+      Effect.succeed(
+        output(
+          [
+            "HTTP/2.0 200 OK",
+            "",
+            '{"sha":"merged-sha","merged":true,"message":"Pull Request successfully merged"}',
+          ].join("\n"),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const github = yield* GitHubApi.GitHubApiClient;
+      const result = yield* github.mergePullRequest({
+        cwd: "/repo",
+        hostname: "github.com",
+        owner: "acme",
+        repository: "widgets",
+        number: 3,
+        expectedHeadSha: "head-sha",
+        strategy: "squash",
+        commitTitle: "Ship widgets (#3)",
+      });
+
+      assert.isFalse(result.notModified);
+      if (result.notModified) return;
+      assert.deepStrictEqual(result.data, {
+        merged: true,
+        mergedCommitSha: "merged-sha",
+        message: "Pull Request successfully merged",
+      });
+      expect(executeApi).toHaveBeenCalledWith({
+        cwd: "/repo",
+        hostname: "github.com",
+        endpoint: "repos/acme/widgets/pulls/3/merge",
+        method: "PUT",
+        headers: {
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+        body: {
+          sha: "head-sha",
+          merge_method: "squash",
+          commit_title: "Ship widgets (#3)",
+        },
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("creates a draft release at one exact source commit without generated claims", () => {
+    executeApi.mockReturnValueOnce(
+      Effect.succeed(
+        output(
+          [
+            "HTTP/2.0 201 Created",
+            "",
+            '{"id":17,"tag_name":"v1.2.3","target_commitish":"source-sha","name":"Lyn Code 1.2.3","draft":true,"prerelease":false,"html_url":"https://github.com/acme/widgets/releases/tag/v1.2.3","created_at":"2026-08-05T00:00:00Z","published_at":null}',
+          ].join("\n"),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const github = yield* GitHubApi.GitHubApiClient;
+      const result = yield* github.createRelease({
+        cwd: "/repo",
+        hostname: "github.com",
+        owner: "acme",
+        repository: "widgets",
+        tagName: "v1.2.3",
+        targetCommitish: "source-sha",
+        name: "Lyn Code 1.2.3",
+        body: "Evidence-backed release notes.",
+        draft: true,
+        prerelease: false,
+      });
+
+      assert.isFalse(result.notModified);
+      if (result.notModified) return;
+      assert.strictEqual(result.data.releaseId, "17");
+      assert.isTrue(result.data.draft);
+      expect(executeApi).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: "repos/acme/widgets/releases",
+          method: "POST",
+          body: expect.objectContaining({
+            tag_name: "v1.2.3",
+            target_commitish: "source-sha",
+            draft: true,
+            generate_release_notes: false,
+          }),
+        }),
+      );
     }).pipe(Effect.provide(layer));
   });
 });

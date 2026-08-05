@@ -40,12 +40,18 @@ export type GitHubApiOperation =
   | "listBranches"
   | "getBranch"
   | "getRequiredChecks"
+  | "getBranchProtection"
   | "getRateLimit"
   | "createPullRequest"
   | "updatePullRequest"
   | "convertPullRequestToDraft"
   | "markPullRequestReadyForReview"
-  | "resolveReviewThread";
+  | "resolveReviewThread"
+  | "mergePullRequest"
+  | "getTagReference"
+  | "createRelease"
+  | "getReleaseByTag"
+  | "uploadReleaseArtifact";
 
 export type GitHubApiFailureKind =
   | "authentication_required"
@@ -201,6 +207,49 @@ export interface GitHubApiRepository {
     readonly repository: string;
     readonly htmlUrl: string;
   } | null;
+  readonly allowedMergeStrategies: ReadonlyArray<"merge_commit" | "squash" | "rebase">;
+}
+
+export interface GitHubApiBranchProtection {
+  readonly protected: boolean;
+  readonly requiredStatusChecks: {
+    readonly strict: boolean;
+    readonly contexts: ReadonlyArray<string>;
+  } | null;
+  readonly requiredApprovingReviewCount: number;
+  readonly dismissStaleReviews: boolean;
+  readonly requireCodeOwnerReviews: boolean;
+  readonly requireLastPushApproval: boolean;
+  readonly requireConversationResolution: boolean;
+  readonly requireLinearHistory: boolean;
+  readonly requireSignedCommits: boolean;
+  readonly enforceAdmins: boolean;
+  readonly allowForcePushes: boolean;
+  readonly allowDeletions: boolean;
+}
+
+export interface GitHubApiMergeResult {
+  readonly merged: boolean;
+  readonly mergedCommitSha: string | null;
+  readonly message: string;
+}
+
+export interface GitHubApiTagReference {
+  readonly ref: string;
+  readonly objectSha: string;
+  readonly objectType: "commit" | "tag" | "unknown";
+}
+
+export interface GitHubApiRelease {
+  readonly releaseId: string;
+  readonly tagName: string;
+  readonly targetCommitish: string;
+  readonly name: string;
+  readonly draft: boolean;
+  readonly prerelease: boolean;
+  readonly htmlUrl: string;
+  readonly createdAt: string;
+  readonly publishedAt: string | null;
 }
 
 export interface GitHubApiIssue {
@@ -576,6 +625,9 @@ const RawRepository = Schema.Struct({
   ),
   archived: Schema.Boolean,
   fork: Schema.Boolean,
+  allow_merge_commit: Schema.optional(Schema.Boolean),
+  allow_squash_merge: Schema.optional(Schema.Boolean),
+  allow_rebase_merge: Schema.optional(Schema.Boolean),
   parent: Schema.optional(
     Schema.NullOr(Schema.Struct({ id: Id, full_name: Schema.String, html_url: Schema.String })),
   ),
@@ -591,6 +643,61 @@ const RawAccount = Schema.Struct({
 const RawRequiredChecks = Schema.Struct({
   checks: Schema.optional(Schema.Array(Schema.Struct({ context: Schema.String }))),
   contexts: Schema.optional(Schema.Array(Schema.String)),
+});
+const RawEnabledRule = Schema.Struct({ enabled: Schema.Boolean });
+const RawBranchProtection = Schema.Struct({
+  required_status_checks: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        strict: Schema.Boolean,
+        contexts: Schema.optional(Schema.Array(Schema.String)),
+        checks: Schema.optional(
+          Schema.Array(
+            Schema.Struct({
+              context: Schema.String,
+              app_id: Schema.optional(Schema.NullOr(Schema.Number)),
+            }),
+          ),
+        ),
+      }),
+    ),
+  ),
+  required_pull_request_reviews: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        required_approving_review_count: Schema.optional(Schema.Number),
+        dismiss_stale_reviews: Schema.optional(Schema.Boolean),
+        require_code_owner_reviews: Schema.optional(Schema.Boolean),
+        require_last_push_approval: Schema.optional(Schema.Boolean),
+      }),
+    ),
+  ),
+  required_conversation_resolution: Schema.optional(Schema.NullOr(RawEnabledRule)),
+  required_linear_history: Schema.optional(Schema.NullOr(RawEnabledRule)),
+  required_signatures: Schema.optional(Schema.NullOr(RawEnabledRule)),
+  enforce_admins: Schema.optional(Schema.NullOr(RawEnabledRule)),
+  allow_force_pushes: Schema.optional(Schema.NullOr(RawEnabledRule)),
+  allow_deletions: Schema.optional(Schema.NullOr(RawEnabledRule)),
+});
+const RawMergeResult = Schema.Struct({
+  sha: Schema.optional(Schema.NullOr(Schema.String)),
+  merged: Schema.Boolean,
+  message: Schema.String,
+});
+const RawGitReference = Schema.Struct({
+  ref: Schema.String,
+  object: Schema.Struct({ sha: Schema.String, type: Schema.String }),
+});
+const RawRelease = Schema.Struct({
+  id: Id,
+  tag_name: Schema.String,
+  target_commitish: Schema.String,
+  name: Schema.optional(Schema.NullOr(Schema.String)),
+  draft: Schema.Boolean,
+  prerelease: Schema.Boolean,
+  html_url: Schema.String,
+  created_at: Schema.String,
+  published_at: Schema.optional(NullableString),
 });
 
 type SchemaType<S extends Schema.Top> = Schema.Schema.Type<S>;
@@ -704,6 +811,25 @@ function normalizeRepository(repository: SchemaType<typeof RawRepository>): GitH
     isArchived: repository.archived,
     isFork: repository.fork,
     parentRepository,
+    allowedMergeStrategies: [
+      ...(repository.allow_merge_commit === false ? [] : (["merge_commit"] as const)),
+      ...(repository.allow_squash_merge === false ? [] : (["squash"] as const)),
+      ...(repository.allow_rebase_merge === false ? [] : (["rebase"] as const)),
+    ],
+  };
+}
+
+function normalizeRelease(release: SchemaType<typeof RawRelease>): GitHubApiRelease {
+  return {
+    releaseId: String(release.id),
+    tagName: release.tag_name,
+    targetCommitish: release.target_commitish,
+    name: release.name ?? release.tag_name,
+    draft: release.draft,
+    prerelease: release.prerelease,
+    htmlUrl: release.html_url,
+    createdAt: release.created_at,
+    publishedAt: release.published_at ?? null,
   };
 }
 
@@ -1323,6 +1449,9 @@ export class GitHubApiClient extends Context.Service<
     readonly getRequiredChecks: (
       input: RepositoryInput & { readonly branch: string; readonly retry?: RetryInput },
     ) => Effect.Effect<GitHubApiResult<ReadonlyArray<string>>, GitHubApiError>;
+    readonly getBranchProtection: (
+      input: RepositoryInput & { readonly branch: string; readonly retry?: RetryInput },
+    ) => Effect.Effect<GitHubApiResult<GitHubApiBranchProtection>, GitHubApiError>;
     readonly getRateLimit: (input: {
       readonly cwd: string;
       readonly hostname: string;
@@ -1369,6 +1498,40 @@ export class GitHubApiClient extends Context.Service<
       GitHubApiResult<{ readonly threadNodeId: string; readonly isResolved: boolean }>,
       GitHubApiError
     >;
+    readonly mergePullRequest: (
+      input: RepositoryInput & {
+        readonly number: number;
+        readonly expectedHeadSha: string;
+        readonly strategy: "merge_commit" | "squash" | "rebase";
+        readonly commitTitle?: string;
+        readonly commitMessage?: string;
+        readonly retry?: RetryInput;
+      },
+    ) => Effect.Effect<GitHubApiResult<GitHubApiMergeResult>, GitHubApiError>;
+    readonly getTagReference: (
+      input: RepositoryInput & { readonly tagName: string; readonly retry?: RetryInput },
+    ) => Effect.Effect<GitHubApiResult<GitHubApiTagReference>, GitHubApiError>;
+    readonly getReleaseByTag: (
+      input: RepositoryInput & { readonly tagName: string; readonly retry?: RetryInput },
+    ) => Effect.Effect<GitHubApiResult<GitHubApiRelease>, GitHubApiError>;
+    readonly createRelease: (
+      input: RepositoryInput & {
+        readonly tagName: string;
+        readonly targetCommitish: string;
+        readonly name: string;
+        readonly body: string;
+        readonly draft: boolean;
+        readonly prerelease: boolean;
+        readonly retry?: RetryInput;
+      },
+    ) => Effect.Effect<GitHubApiResult<GitHubApiRelease>, GitHubApiError>;
+    readonly uploadReleaseArtifact: (
+      input: RepositoryInput & {
+        readonly tagName: string;
+        readonly artifactPath: string;
+        readonly displayName?: string;
+      },
+    ) => Effect.Effect<void, GitHubApiError>;
   }
 >()("t3/github/GitHubApiClient") {}
 
@@ -2010,6 +2173,52 @@ export const make = Effect.gen(function* () {
           ),
         ),
       ),
+    getBranchProtection: (input) =>
+      rest({
+        ...input,
+        operation: "getBranchProtection",
+        endpoint: repositoryEndpoint(
+          input,
+          `/branches/${encodeURIComponent(input.branch)}/protection`,
+        ),
+        schema: RawBranchProtection,
+      }).pipe(
+        Effect.map((result) =>
+          mapResult(result, (protection) => {
+            const requiredStatusChecks = protection.required_status_checks ?? null;
+            const reviewRules = protection.required_pull_request_reviews ?? null;
+            return {
+              protected: true,
+              requiredStatusChecks:
+                requiredStatusChecks === null
+                  ? null
+                  : {
+                      strict: requiredStatusChecks.strict,
+                      contexts: Array.from(
+                        new Set([
+                          ...(requiredStatusChecks.contexts ?? []),
+                          ...(requiredStatusChecks.checks ?? []).map((check) => check.context),
+                        ]),
+                      ),
+                    },
+              requiredApprovingReviewCount: Math.max(
+                0,
+                Math.trunc(reviewRules?.required_approving_review_count ?? 0),
+              ),
+              dismissStaleReviews: reviewRules?.dismiss_stale_reviews ?? false,
+              requireCodeOwnerReviews: reviewRules?.require_code_owner_reviews ?? false,
+              requireLastPushApproval: reviewRules?.require_last_push_approval ?? false,
+              requireConversationResolution:
+                protection.required_conversation_resolution?.enabled ?? false,
+              requireLinearHistory: protection.required_linear_history?.enabled ?? false,
+              requireSignedCommits: protection.required_signatures?.enabled ?? false,
+              enforceAdmins: protection.enforce_admins?.enabled ?? false,
+              allowForcePushes: protection.allow_force_pushes?.enabled ?? false,
+              allowDeletions: protection.allow_deletions?.enabled ?? false,
+            };
+          }),
+        ),
+      ),
     getRateLimit: (input) =>
       rest({
         ...input,
@@ -2125,6 +2334,112 @@ export const make = Effect.gen(function* () {
           })),
         ),
       ),
+    mergePullRequest: (input) =>
+      rest({
+        ...input,
+        operation: "mergePullRequest",
+        endpoint: repositoryEndpoint(input, `/pulls/${input.number}/merge`),
+        method: "PUT",
+        schema: RawMergeResult,
+        body: {
+          sha: input.expectedHeadSha,
+          merge_method:
+            input.strategy === "merge_commit"
+              ? "merge"
+              : input.strategy === "squash"
+                ? "squash"
+                : "rebase",
+          ...(input.commitTitle === undefined ? {} : { commit_title: input.commitTitle }),
+          ...(input.commitMessage === undefined ? {} : { commit_message: input.commitMessage }),
+        },
+        retry: input.retry ?? { maxRetries: 0, baseDelayMs: 0 },
+      }).pipe(
+        Effect.map((result) =>
+          mapResult(result, (merged) => ({
+            merged: merged.merged,
+            mergedCommitSha: merged.sha ?? null,
+            message: merged.message,
+          })),
+        ),
+      ),
+    getTagReference: (input) =>
+      rest({
+        ...input,
+        operation: "getTagReference",
+        endpoint: repositoryEndpoint(input, `/git/ref/tags/${encodeURIComponent(input.tagName)}`),
+        schema: RawGitReference,
+      }).pipe(
+        Effect.map((result) =>
+          mapResult(result, (reference) => ({
+            ref: reference.ref,
+            objectSha: reference.object.sha,
+            objectType:
+              reference.object.type === "commit" || reference.object.type === "tag"
+                ? reference.object.type
+                : "unknown",
+          })),
+        ),
+      ),
+    getReleaseByTag: (input) =>
+      rest({
+        ...input,
+        operation: "getReleaseByTag",
+        endpoint: repositoryEndpoint(input, `/releases/tags/${encodeURIComponent(input.tagName)}`),
+        schema: RawRelease,
+      }).pipe(Effect.map((result) => mapResult(result, normalizeRelease))),
+    createRelease: (input) =>
+      rest({
+        ...input,
+        operation: "createRelease",
+        endpoint: repositoryEndpoint(input, "/releases"),
+        method: "POST",
+        schema: RawRelease,
+        body: {
+          tag_name: input.tagName,
+          target_commitish: input.targetCommitish,
+          name: input.name,
+          body: input.body,
+          draft: input.draft,
+          prerelease: input.prerelease,
+          generate_release_notes: false,
+        },
+        retry: input.retry ?? { maxRetries: 0, baseDelayMs: 0 },
+      }).pipe(Effect.map((result) => mapResult(result, normalizeRelease))),
+    uploadReleaseArtifact: (input) => {
+      const displayName = input.displayName?.trim();
+      const artifactArgument =
+        displayName === undefined || displayName.length === 0
+          ? input.artifactPath
+          : `${input.artifactPath}#${displayName
+              .slice(0, 255)
+              .replaceAll("\r", " ")
+              .replaceAll("\n", " ")
+              .replaceAll("\0", " ")}`;
+      return cli
+        .execute({
+          cwd: input.cwd,
+          args: [
+            "release",
+            "upload",
+            input.tagName,
+            artifactArgument,
+            "--repo",
+            `${input.owner}/${input.repository}`,
+          ],
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitHubApiTransportError({
+                operation: "uploadReleaseArtifact",
+                endpoint: "gh release upload",
+                retryable: false,
+                cause,
+              }),
+          ),
+          Effect.asVoid,
+        );
+    },
   });
 });
 
