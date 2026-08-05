@@ -9,6 +9,7 @@ This is a living glossary for Lyn Code. It explains what common terms mean in th
 - [Project and workspace](#project-and-workspace)
 - [Missions](#missions)
 - [Verification](#verification)
+- [Analytics](#analytics)
 - [Thread timeline](#thread-timeline)
 - [Orchestration](#orchestration)
 - [Provider runtime](#provider-runtime)
@@ -142,6 +143,32 @@ stale when the source fingerprint changes.
 A bounded agent run that receives focused failing evidence and writes only in the same task worktree. It
 retains the original task scope and cannot integrate branches or erase the failed run it is trying to
 repair.
+
+### Analytics
+
+#### Analytics metric version
+
+The immutable catalogue version that defines a metric's numerator, denominator, inclusions, and
+exclusions. Aggregates and exports retain this version so a future semantic change cannot silently
+rewrite historical comparisons. See [analytics.md][27].
+
+#### Cost provenance
+
+The evidence category behind a monetary amount: provider reported, pricing-calculated,
+subscription-allocated, local-compute estimate, or unknown. Provenance and currency remain separate;
+unlike categories and currencies are not implicitly summed. See [analytics.md][27].
+
+#### Analytics data quality
+
+The explicit coverage record accompanying analytics: provider-reported, estimated, unknown, priced,
+unpriced, stale-pricing, incomplete-outcome, pending-human-disposition, and deleted-source-detail
+counts. Missing evidence is not represented as zero. See [analytics.md][27].
+
+#### Analytics recommendation
+
+A non-binding, evidence-labelled observation with a task segment, sample, period, metric keys,
+uncertainty, estimated-cost state, and policy-conflict state. It cannot change routing, permissions,
+verification, source, Git, or GitHub state. See [analytics.md][27].
 
 ### Thread timeline
 
@@ -301,3 +328,4 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [24]: ./overview.md
 [25]: ./missions.md
 [26]: ./verification.md
+[27]: ./analytics.md

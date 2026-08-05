@@ -82,6 +82,10 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import { ProjectionAgentRunRepositoryLive } from "./persistence/Layers/ProjectionAgentRuns.ts";
+import { ProjectionMissionTeamRepositoryLive } from "./persistence/Layers/ProjectionMissionTeams.ts";
+import { ProjectionUsageAnalyticsRepositoryLive } from "./persistence/Layers/ProjectionUsageAnalytics.ts";
+import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -113,6 +117,8 @@ import * as GitHubWorkspace from "./github/GitHubWorkspaceService.ts";
 import * as GitHubWorkflow from "./github/GitHubWorkflowService.ts";
 import * as MemoryWorkspace from "./memory/MemoryWorkspaceService.ts";
 import * as RoutingCoordinator from "./routing/RoutingCoordinator.ts";
+import * as UsageAnalyticsWorkspace from "./usage-analytics/UsageAnalyticsWorkspaceService.ts";
+import * as UsageAnalyticsEventRecorder from "./usage-analytics/UsageAnalyticsEventRecorder.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -368,6 +374,7 @@ const makeWsRpcLayer = (
       const githubWorkflow = yield* GitHubWorkflow.GitHubWorkflowService;
       const memoryWorkspace = yield* MemoryWorkspace.MemoryWorkspaceService;
       const routing = yield* RoutingCoordinator.RoutingCoordinator;
+      const usageAnalytics = yield* UsageAnalyticsWorkspace.UsageAnalyticsWorkspaceService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
@@ -2280,6 +2287,100 @@ const makeWsRpcLayer = (
           observeRpcStream(WS_METHODS.routingSubscribeWorkspace, routing.streamWorkspace(input), {
             "rpc.aggregate": "routing",
           }),
+        [WS_METHODS.analyticsGetWorkspace]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.analyticsGetWorkspace,
+            usageAnalytics.getWorkspace(input.filter),
+            { "rpc.aggregate": "analytics" },
+          ),
+        [WS_METHODS.analyticsGetRunDetail]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.analyticsGetRunDetail,
+            usageAnalytics.getRunDetail(input.agentRunId),
+            { "rpc.aggregate": "analytics" },
+          ),
+        [WS_METHODS.analyticsUpdateSettings]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.analyticsUpdateSettings,
+            usageAnalytics.updateSettings(input.settings),
+            { "rpc.aggregate": "analytics" },
+          ),
+        [WS_METHODS.analyticsSaveBudget]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.analyticsSaveBudget,
+            usageAnalytics.saveBudget(input.policy),
+            { "rpc.aggregate": "analytics" },
+          ),
+        [WS_METHODS.analyticsSavePricingSnapshot]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.analyticsSavePricingSnapshot,
+            usageAnalytics.savePricingSnapshot(input.snapshot),
+            { "rpc.aggregate": "analytics" },
+          ),
+        [WS_METHODS.analyticsSaveSubscriptionAttributionRule]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.analyticsSaveSubscriptionAttributionRule,
+            usageAnalytics.saveSubscriptionAttributionRule(input.rule),
+            { "rpc.aggregate": "analytics" },
+          ),
+        [WS_METHODS.analyticsSaveExchangeRateSnapshot]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.analyticsSaveExchangeRateSnapshot,
+            usageAnalytics.saveExchangeRateSnapshot(input.snapshot),
+            { "rpc.aggregate": "analytics" },
+          ),
+        [WS_METHODS.analyticsAcknowledgeBudgetEvent]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.analyticsAcknowledgeBudgetEvent,
+            usageAnalytics.acknowledgeBudgetEvent(input),
+            { "rpc.aggregate": "analytics" },
+          ),
+        [WS_METHODS.analyticsCreateBudgetOverride]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.analyticsCreateBudgetOverride,
+            usageAnalytics.createBudgetOverride(input.override),
+            { "rpc.aggregate": "analytics" },
+          ),
+        [WS_METHODS.analyticsAcknowledgeAlert]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.analyticsAcknowledgeAlert,
+            usageAnalytics.acknowledgeAlert(input),
+            { "rpc.aggregate": "analytics" },
+          ),
+        [WS_METHODS.analyticsSaveAnnotation]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.analyticsSaveAnnotation,
+            usageAnalytics.saveAnnotation(input.annotation),
+            { "rpc.aggregate": "analytics" },
+          ),
+        [WS_METHODS.analyticsRecordHumanDisposition]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.analyticsRecordHumanDisposition,
+            usageAnalytics.recordHumanDisposition(input),
+            { "rpc.aggregate": "analytics" },
+          ),
+        [WS_METHODS.analyticsCreateExport]: (input) =>
+          observeRpcEffect(WS_METHODS.analyticsCreateExport, usageAnalytics.createExport(input), {
+            "rpc.aggregate": "analytics",
+          }),
+        [WS_METHODS.analyticsStartRetention]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.analyticsStartRetention,
+            usageAnalytics.startRetention(input),
+            { "rpc.aggregate": "analytics" },
+          ),
+        [WS_METHODS.analyticsRebuildAggregates]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.analyticsRebuildAggregates,
+            usageAnalytics.rebuildAggregates(input),
+            { "rpc.aggregate": "analytics" },
+          ),
+        [WS_METHODS.analyticsSubscribeWorkspace]: (input) =>
+          observeRpcStream(
+            WS_METHODS.analyticsSubscribeWorkspace,
+            usageAnalytics.subscribeWorkspace(input.filter),
+            { "rpc.aggregate": "analytics" },
+          ),
         [WS_METHODS.subscribeVcsStatus]: (input) =>
           observeRpcStream(
             WS_METHODS.subscribeVcsStatus,
@@ -2665,6 +2766,26 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           Effect.provide(
             makeWsRpcLayer(session, previewAutomationBroker).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
+              Layer.provide(
+                UsageAnalyticsWorkspace.layer.pipe(
+                  Layer.provideMerge(UsageAnalyticsEventRecorder.layer),
+                  Layer.provideMerge(
+                    ProjectionAgentRunRepositoryLive.pipe(
+                      Layer.provide(SqlitePersistenceLayerLive),
+                    ),
+                  ),
+                  Layer.provideMerge(
+                    ProjectionMissionTeamRepositoryLive.pipe(
+                      Layer.provide(SqlitePersistenceLayerLive),
+                    ),
+                  ),
+                  Layer.provide(
+                    ProjectionUsageAnalyticsRepositoryLive.pipe(
+                      Layer.provide(SqlitePersistenceLayerLive),
+                    ),
+                  ),
+                ),
+              ),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               Layer.provide(

@@ -95,4 +95,15 @@ describe("searchSettings", () => {
       to: "/settings/routing",
     });
   });
+
+  it("indexes analytics presentation sections", () => {
+    expect(searchSettings("cost and data quality")[0]).toMatchObject({
+      id: "analytics-costs",
+      to: "/settings/analytics",
+    });
+    expect(searchSettings("analytics recommendations")[0]).toMatchObject({
+      id: "analytics-recommendations",
+      to: "/settings/analytics",
+    });
+  });
 });

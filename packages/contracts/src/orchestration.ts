@@ -92,6 +92,11 @@ import {
   RoutingReasoningLevel,
   TaskRoutingAssessmentId,
 } from "./routing.ts";
+import {
+  AnalyticsAggregateId,
+  AnalyticsEventReferencePayload,
+  AnalyticsOrchestrationEventType,
+} from "./analytics.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -1738,6 +1743,15 @@ export const RoutingEventRecordCommand = Schema.Struct({
   payload: RoutingEventReferencePayload,
 });
 
+export const AnalyticsEventRecordCommand = Schema.Struct({
+  type: Schema.Literal("analytics.event.record"),
+  commandId: CommandId,
+  aggregateId: AnalyticsAggregateId,
+  eventType: AnalyticsOrchestrationEventType,
+  payload: AnalyticsEventReferencePayload,
+  occurredAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -1776,6 +1790,7 @@ const InternalOrchestrationCommand = Schema.Union([
   GitHubEventRecordCommand,
   MemoryEventRecordCommand,
   RoutingEventRecordCommand,
+  AnalyticsEventRecordCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -1999,6 +2014,41 @@ export const OrchestrationEventType = Schema.Literals([
   "routing.context_reduction_applied",
   "routing.context_incompatible",
   "routing.no_eligible_candidate",
+  "analytics.usage_recorded",
+  "analytics.usage_reconciled",
+  "analytics.usage_unknown",
+  "analytics.pricing_snapshot_created",
+  "analytics.subscription_attribution_rule_created",
+  "analytics.subscription_allocation_rebuilt",
+  "analytics.exchange_rate_snapshot_created",
+  "analytics.pricing_snapshot_updated",
+  "analytics.cost_calculated",
+  "analytics.cost_recalculation_failed",
+  "analytics.provider_cost_received",
+  "analytics.run_performance_finalized",
+  "analytics.task_outcome_updated",
+  "analytics.human_disposition_recorded",
+  "analytics.human_disposition_source_changed",
+  "analytics.mission_outcome_updated",
+  "analytics.aggregate_requested",
+  "analytics.aggregate_completed",
+  "analytics.aggregate_invalidated",
+  "analytics.aggregate_failed",
+  "analytics.budget_created",
+  "analytics.budget_updated",
+  "analytics.budget_soft_limit_reached",
+  "analytics.budget_hard_limit_reached",
+  "analytics.budget_override_created",
+  "analytics.budget_override_expired",
+  "analytics.alert_created",
+  "analytics.alert_acknowledged",
+  "analytics.recommendation_created",
+  "analytics.export_started",
+  "analytics.export_completed",
+  "analytics.export_failed",
+  "analytics.retention_started",
+  "analytics.retention_completed",
+  "analytics.retention_failed",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -2008,6 +2058,7 @@ export const OrchestrationAggregateKind = Schema.Literals([
   "mission",
   "memory",
   "routing",
+  "analytics",
 ]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
@@ -2582,6 +2633,7 @@ const EventBaseFields = {
     MissionId,
     MemoryAggregateId,
     RoutingAggregateId,
+    AnalyticsAggregateId,
   ]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
@@ -3160,6 +3212,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: RoutingOrchestrationEventType,
     payload: RoutingEventReferencePayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: AnalyticsOrchestrationEventType,
+    payload: AnalyticsEventReferencePayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;

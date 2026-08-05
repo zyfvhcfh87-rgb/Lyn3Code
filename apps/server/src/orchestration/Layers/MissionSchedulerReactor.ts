@@ -162,6 +162,7 @@ const make = Effect.gen(function* () {
           writeCapable:
             agent.permissions.includes("write_files") ||
             agent.permissions.includes("create_commits"),
+          automaticStart: true,
           requestedAt: observedAt,
         })
         .pipe(

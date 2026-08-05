@@ -1,6 +1,7 @@
 import {
   AgentRunId,
   ALL_AGENT_PERMISSIONS,
+  AnalyticsAggregateId,
   CommandId,
   MissionTaskId,
   ModelProfileId,
@@ -13,6 +14,7 @@ import {
   ThreadId,
   type AgentPermissions,
   type AgentRunPurpose,
+  type BudgetDecision,
   type ManagedWorktreeId,
   type MissionAgent,
   type ModelCapabilitySnapshot,
@@ -55,10 +57,12 @@ import * as Stream from "effect/Stream";
 
 import { ProjectionAgentRunRepository } from "../persistence/Services/ProjectionAgentRuns.ts";
 import { ProjectionRoutingRepository } from "../persistence/Services/ProjectionRouting.ts";
+import { ProjectionUsageAnalyticsRepository } from "../persistence/Services/ProjectionUsageAnalytics.ts";
 import { BUILT_IN_DRIVERS } from "../provider/builtInDrivers.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { checkBudgetBeforeRun } from "../usage-analytics/UsageAnalyticsBudgetGuard.ts";
 import { mapReasoningLevel } from "./ReasoningMapping.ts";
 import {
   makeRoutingCancellationGuard,
@@ -195,6 +199,7 @@ export interface RoutingRunRequest {
   readonly decisionType?: RoutingDecision["decisionType"];
   readonly commandType?: "mission.start" | "mission.retry";
   readonly automaticFallbackFromAgentRunId?: AgentRunId;
+  readonly automaticStart?: boolean;
 }
 
 export interface RoutingCoordinatorShape {
@@ -274,6 +279,7 @@ export class RoutingCoordinator extends Context.Service<
 export const make = Effect.gen(function* () {
   const repository = yield* ProjectionRoutingRepository;
   const runRepository = yield* ProjectionAgentRunRepository;
+  const analyticsRepository = yield* ProjectionUsageAnalyticsRepository;
   const providerRegistry = yield* ProviderRegistry;
   const snapshots = yield* ProjectionSnapshotQuery;
   const engine = yield* OrchestrationEngineService;
@@ -288,6 +294,53 @@ export const make = Effect.gen(function* () {
     effect.pipe(Effect.mapError(persistenceError));
   const publish = (projectId: string | null) =>
     PubSub.publish(changes, { projectId }).pipe(Effect.asVoid);
+
+  const recordBudgetDecision = (input: {
+    readonly decision: BudgetDecision;
+    readonly projectId: RoutingWorkspaceScope["projectId"];
+    readonly missionId: NonNullable<RoutingWorkspaceScope["missionId"]>;
+    readonly taskId: NonNullable<RoutingWorkspaceScope["taskId"]>;
+    readonly agentRunId: AgentRunId | null;
+    readonly occurredAt: string;
+  }) =>
+    Effect.gen(function* () {
+      if (input.decision.action === "informational") return;
+      const budgetPolicyId =
+        input.decision.blockingPolicyId ?? input.decision.applicablePolicyIds[0];
+      if (budgetPolicyId === undefined) return;
+      yield* engine.dispatch({
+        type: "analytics.event.record",
+        commandId: CommandId.make(yield* uuid()),
+        aggregateId: AnalyticsAggregateId.make(`analytics:budget:${input.missionId}`),
+        eventType:
+          input.decision.allowed || input.decision.reason.startsWith("Soft cost limit reached")
+            ? "analytics.budget_soft_limit_reached"
+            : "analytics.budget_hard_limit_reached",
+        payload: {
+          recordType: "budget_decision",
+          recordId: `${budgetPolicyId}:${input.missionId}:${input.taskId}`,
+          projectId: input.projectId,
+          missionId: input.missionId,
+          taskId: input.taskId,
+          agentRunId: input.agentRunId,
+          usageRecordId: null,
+          costRecordId: null,
+          humanDispositionRecordId: null,
+          budgetPolicyId,
+          exportId: null,
+          retentionOperationId: null,
+          detail: input.decision.reason.slice(0, 1_000),
+        },
+        occurredAt: input.occurredAt,
+      });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("budget decision audit failed without affecting run dispatch", {
+          missionId: input.missionId,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
 
   const record = (input: Parameters<typeof events.record>[0]) =>
     events.record(input).pipe(
@@ -987,6 +1040,52 @@ export const make = Effect.gen(function* () {
     if (automaticFallbackWasCancelled({ ...input, taskId: task.id })) {
       return yield* Effect.fail(
         rpcError("cancelled", "Automatic fallback stopped because cancellation was requested."),
+      );
+    }
+    const budgetDecision = yield* checkBudgetBeforeRun(analyticsRepository, {
+      projectId: detail.mission.projectId,
+      missionId: detail.mission.id,
+      taskId: task.id,
+      providerProfileId: selected.candidate.provider.id,
+      modelProfileId: selected.candidate.model.id,
+      agentRoleId: agent?.roleId ?? null,
+      estimatedTokens: assessment.estimatedContextTokens,
+      requestedAt: input.requestedAt,
+      automaticFallback: input.automaticFallbackFromAgentRunId !== undefined,
+    });
+    yield* recordBudgetDecision({
+      decision: budgetDecision,
+      projectId: detail.mission.projectId,
+      missionId: detail.mission.id,
+      taskId: task.id,
+      agentRunId: input.agentRunId ?? null,
+      occurredAt: input.requestedAt,
+    });
+    if (!budgetDecision.allowed) {
+      if (budgetDecision.action === "pause_new_runs" && input.automaticStart === true) {
+        yield* engine
+          .dispatch({
+            type: "mission.scheduler.pause",
+            commandId: CommandId.make(
+              `analytics-budget:${detail.mission.id}:${budgetDecision.blockingPolicyId ?? "unknown"}:pause`,
+            ),
+            missionId: detail.mission.id,
+            requestedAt: input.requestedAt,
+          })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("budget policy blocked a run but scheduler pause failed", {
+                missionId: detail.mission.id,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          );
+      }
+      return yield* Effect.fail(
+        rpcError(
+          "budget_restricted",
+          `${budgetDecision.reason} Create a time-limited budget override to approve this work.`,
+        ),
       );
     }
     const routingDecisionId = RoutingDecisionId.make(yield* uuid());

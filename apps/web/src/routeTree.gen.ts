@@ -26,6 +26,7 @@ import { Route as SettingsConnectionsRouteImport } from './routes/settings.conne
 import { Route as SettingsBetaRouteImport } from './routes/settings.beta'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
+import { Route as SettingsAnalyticsRouteImport } from './routes/settings.analytics'
 import { Route as MissionsEnvironmentIdRouteImport } from './routes/missions.$environmentId'
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as MissionsEnvironmentIdMissionIdRouteImport } from './routes/missions.$environmentId.$missionId'
@@ -118,6 +119,11 @@ const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
   path: '/appearance',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsAnalyticsRoute = SettingsAnalyticsRouteImport.update({
+  id: '/analytics',
+  path: '/analytics',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const MissionsEnvironmentIdRoute = MissionsEnvironmentIdRouteImport.update({
   id: '/$environmentId',
   path: '/$environmentId',
@@ -166,6 +172,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRouteWithChildren
   '/connect/callback': typeof ConnectCallbackRoute
   '/missions/$environmentId': typeof MissionsEnvironmentIdRouteWithChildren
+  '/settings/analytics': typeof SettingsAnalyticsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/beta': typeof SettingsBetaRoute
@@ -190,6 +197,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRouteWithChildren
   '/connect/callback': typeof ConnectCallbackRoute
   '/missions/$environmentId': typeof MissionsEnvironmentIdRouteWithChildren
+  '/settings/analytics': typeof SettingsAnalyticsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/beta': typeof SettingsBetaRoute
@@ -217,6 +225,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRouteWithChildren
   '/connect_/callback': typeof ConnectCallbackRoute
   '/missions/$environmentId': typeof MissionsEnvironmentIdRouteWithChildren
+  '/settings/analytics': typeof SettingsAnalyticsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/beta': typeof SettingsBetaRoute
@@ -245,6 +254,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/connect/callback'
     | '/missions/$environmentId'
+    | '/settings/analytics'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/beta'
@@ -269,6 +279,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/connect/callback'
     | '/missions/$environmentId'
+    | '/settings/analytics'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/beta'
@@ -295,6 +306,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/connect_/callback'
     | '/missions/$environmentId'
+    | '/settings/analytics'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/beta'
@@ -446,6 +458,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAppearanceRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/analytics': {
+      id: '/settings/analytics'
+      path: '/analytics'
+      fullPath: '/settings/analytics'
+      preLoaderRoute: typeof SettingsAnalyticsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/missions/$environmentId': {
       id: '/missions/$environmentId'
       path: '/$environmentId'
@@ -538,6 +557,7 @@ const MissionsRouteWithChildren = MissionsRoute._addFileChildren(
 )
 
 interface SettingsRouteChildren {
+  SettingsAnalyticsRoute: typeof SettingsAnalyticsRoute
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
   SettingsBetaRoute: typeof SettingsBetaRoute
@@ -552,6 +572,7 @@ interface SettingsRouteChildren {
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
+  SettingsAnalyticsRoute: SettingsAnalyticsRoute,
   SettingsAppearanceRoute: SettingsAppearanceRoute,
   SettingsArchivedRoute: SettingsArchivedRoute,
   SettingsBetaRoute: SettingsBetaRoute,
