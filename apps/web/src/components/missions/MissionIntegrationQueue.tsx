@@ -11,6 +11,9 @@ import { CheckIcon, GitMergeIcon, TriangleAlertIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardPanel } from "../ui/card";
+import { verificationStatusLabel } from "../verification/verificationDisplay";
+import { DefinitionLabel } from "./DefinitionLabel";
+import { MISSION_INTEGRATION_MODE_LABELS, TASK_INTEGRATION_STATUS_LABELS } from "./missionLabels";
 import { missionDependencyLayers } from "./MissionTaskGraph.logic";
 
 const QUEUED_INTEGRATION_STATUSES = new Set<MissionTask["integrationStatus"]>([
@@ -72,9 +75,11 @@ export function MissionIntegrationQueue({
       <div className="flex flex-wrap items-center gap-2">
         <GitMergeIcon className="size-4 text-muted-foreground" />
         <h2 id="mission-integration-heading" className="text-sm font-semibold">
-          Integration queue
+          <DefinitionLabel term="integration">Integration queue</DefinitionLabel>
         </h2>
-        <Badge variant="outline">{mission.teamSettings.integrationMode}</Badge>
+        <Badge variant="outline">
+          {MISSION_INTEGRATION_MODE_LABELS[mission.teamSettings.integrationMode]}
+        </Badge>
         <span className="text-xs tabular-nums text-muted-foreground">
           {queuedTasks.length} waiting
         </span>
@@ -116,7 +121,7 @@ export function MissionIntegrationQueue({
                         {task.title}
                       </h3>
                       <Badge variant={integrationBadgeVariant(task.integrationStatus)}>
-                        {task.integrationStatus}
+                        {TASK_INTEGRATION_STATUS_LABELS[task.integrationStatus]}
                       </Badge>
                     </div>
 
@@ -149,7 +154,7 @@ export function MissionIntegrationQueue({
                       </dd>
                       <dt className="text-muted-foreground">Verification</dt>
                       <dd className="text-right">
-                        {verification?.authorization.status ?? "missing"}
+                        {verificationStatusLabel(verification?.authorization.status ?? "missing")}
                       </dd>
                     </dl>
 

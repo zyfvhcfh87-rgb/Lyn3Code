@@ -19,6 +19,8 @@ import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardPanel } from "../ui/card";
+import { DefinitionLabel } from "./DefinitionLabel";
+import { MANAGED_WORKTREE_STATUS_LABELS } from "./missionLabels";
 
 function worktreeBadgeVariant(status: ManagedWorktree["status"]) {
   if (status === "integrated" || status === "ready") return "success" as const;
@@ -91,7 +93,7 @@ export function MissionWorktreePanel({
       <div className="flex items-center gap-2">
         <GitBranchIcon className="size-4 text-muted-foreground" />
         <h2 id="mission-worktrees-heading" className="text-sm font-semibold">
-          Managed worktrees
+          <DefinitionLabel term="worktree">Managed worktrees</DefinitionLabel>
         </h2>
         <span className="text-xs tabular-nums text-muted-foreground">{worktrees.length}</span>
       </div>
@@ -126,7 +128,9 @@ export function MissionWorktreePanel({
                         {worktree.branchName}
                       </p>
                     </div>
-                    <Badge variant={worktreeBadgeVariant(worktree.status)}>{worktree.status}</Badge>
+                    <Badge variant={worktreeBadgeVariant(worktree.status)}>
+                      {MANAGED_WORKTREE_STATUS_LABELS[worktree.status]}
+                    </Badge>
                   </div>
 
                   <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">

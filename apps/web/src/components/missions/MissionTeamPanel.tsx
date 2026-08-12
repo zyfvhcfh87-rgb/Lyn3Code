@@ -20,6 +20,12 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardPanel } from "../ui/card";
 import { Input } from "../ui/input";
+import { DefinitionLabel } from "./DefinitionLabel";
+import {
+  AGENT_ROLE_KIND_LABELS,
+  MISSION_AGENT_STATUS_LABELS,
+  MISSION_SCHEDULER_STATUS_LABELS,
+} from "./missionLabels";
 
 export interface MissionProviderChoice {
   readonly id: ProviderInstanceId;
@@ -171,7 +177,9 @@ export function MissionTeamPanel({
           Agent team
         </h2>
         <Badge variant={mission.schedulerStatus === "running" ? "info" : "outline"}>
-          Scheduler {mission.schedulerStatus}
+          <DefinitionLabel term="scheduler">
+            {MISSION_SCHEDULER_STATUS_LABELS[mission.schedulerStatus]}
+          </DefinitionLabel>
         </Badge>
         <Button
           className="ml-auto"
@@ -278,12 +286,15 @@ export function MissionTeamPanel({
                     <div className="min-w-0 flex-1">
                       <h3 className="truncate text-sm font-semibold">{agent.displayName}</h3>
                       <p className="text-xs text-muted-foreground">
-                        {roleNameByKind.get(agent.roleKind) ?? agent.roleKind} ·{" "}
-                        {agent.providerInstanceId}
+                        {roleNameByKind.get(agent.roleKind) ??
+                          AGENT_ROLE_KIND_LABELS[agent.roleKind]}{" "}
+                        · {agent.providerInstanceId}
                         {agent.model ? ` / ${agent.model}` : ""}
                       </p>
                     </div>
-                    <Badge variant={agentBadgeVariant(agent.status)}>{agent.status}</Badge>
+                    <Badge variant={agentBadgeVariant(agent.status)}>
+                      {MISSION_AGENT_STATUS_LABELS[agent.status]}
+                    </Badge>
                     <Button
                       size="icon-sm"
                       variant="ghost"
@@ -376,7 +387,7 @@ export function MissionTeamPanel({
                             ] as const
                           ).map((kind) => (
                             <option key={kind} value={kind}>
-                              {roleNameByKind.get(kind) ?? kind}
+                              {roleNameByKind.get(kind) ?? AGENT_ROLE_KIND_LABELS[kind]}
                             </option>
                           ))}
                         </select>
@@ -515,7 +526,7 @@ export function MissionTeamPanel({
               ] as const
             ).map((kind) => (
               <option key={kind} value={kind}>
-                {roleNameByKind.get(kind) ?? kind}
+                {roleNameByKind.get(kind) ?? AGENT_ROLE_KIND_LABELS[kind]}
               </option>
             ))}
           </select>

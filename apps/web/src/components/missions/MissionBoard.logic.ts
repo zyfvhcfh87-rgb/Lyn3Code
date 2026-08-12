@@ -1,3 +1,8 @@
+import { MISSION_STATUS_LABELS } from "./missionLabels";
+
+// Re-exported so existing board call sites and tests keep importing labels from one place.
+export { MISSION_STATUS_LABELS };
+
 export const MISSION_BOARD_STATUSES = [
   "backlog",
   "planning",
@@ -14,19 +19,6 @@ export const MISSION_TERMINAL_FILTER_STATUSES = ["failed", "cancelled"] as const
 export type MissionBoardStatus = (typeof MISSION_BOARD_STATUSES)[number];
 export type MissionTerminalFilterStatus = (typeof MISSION_TERMINAL_FILTER_STATUSES)[number];
 export type MissionPresentationStatus = MissionBoardStatus | MissionTerminalFilterStatus;
-
-export const MISSION_STATUS_LABELS: Readonly<Record<MissionPresentationStatus, string>> = {
-  backlog: "Backlog",
-  planning: "Planning",
-  ready: "Ready",
-  running: "Running",
-  verification: "Verification",
-  review: "Review",
-  blocked: "Blocked",
-  completed: "Completed",
-  failed: "Failed",
-  cancelled: "Cancelled",
-};
 
 export interface MissionBoardItem {
   readonly missionId: string;

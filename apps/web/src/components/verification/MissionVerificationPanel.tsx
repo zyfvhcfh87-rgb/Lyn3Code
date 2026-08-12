@@ -11,6 +11,7 @@ import { ClipboardCheckIcon, EyeIcon, PlayIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
 import { Card, CardPanel } from "../ui/card";
+import { DefinitionLabel } from "../missions/DefinitionLabel";
 import { VerificationStatusBadge } from "./VerificationStatusBadge";
 
 const EMPTY_MISSION_AGENTS: ReadonlyArray<MissionAgent> = [];
@@ -61,7 +62,7 @@ export function MissionVerificationPanel({
       <div className="flex items-center gap-2">
         <ClipboardCheckIcon className="size-4 text-muted-foreground" />
         <h2 id="mission-verification-heading" className="text-sm font-semibold">
-          Verification
+          <DefinitionLabel term="verification">Verification</DefinitionLabel>
         </h2>
         <span className="text-xs text-muted-foreground">
           Evidence attached to exact source states

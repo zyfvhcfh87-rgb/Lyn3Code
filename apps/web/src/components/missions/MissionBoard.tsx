@@ -4,14 +4,27 @@ import { useState } from "react";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { DefinitionLabel } from "./DefinitionLabel";
+import type { MissionGlossaryTerm } from "./missionGlossary";
 import { MissionCard, type MissionCardProps } from "./MissionCard";
 import {
   filterMissionsByProject,
   groupMissionsForBoard,
   MISSION_BOARD_STATUSES,
   MISSION_STATUS_LABELS,
+  type MissionBoardStatus,
 } from "./MissionBoard.logic";
 import { CreateMissionDialog, type CreateMissionInput } from "./CreateMissionDialog";
+
+/**
+ * Columns whose meaning is not obvious from the label. The rest read for themselves and are left
+ * plain, so the dotted underline stays a signal rather than decoration.
+ */
+const COLUMN_DEFINITIONS: Partial<Record<MissionBoardStatus, MissionGlossaryTerm>> = {
+  verification: "columnVerification",
+  review: "columnReview",
+  blocked: "columnBlocked",
+};
 
 export interface MissionBoardProject {
   readonly id: string;
@@ -111,7 +124,13 @@ export function MissionBoard({
                 >
                   <header className="mb-2 flex items-center justify-between gap-2 px-1">
                     <h2 id={`mission-column-${status}`} className="text-sm font-semibold">
-                      {MISSION_STATUS_LABELS[status]}
+                      {COLUMN_DEFINITIONS[status] ? (
+                        <DefinitionLabel term={COLUMN_DEFINITIONS[status]}>
+                          {MISSION_STATUS_LABELS[status]}
+                        </DefinitionLabel>
+                      ) : (
+                        MISSION_STATUS_LABELS[status]
+                      )}
                     </h2>
                     <span className="text-xs tabular-nums text-muted-foreground">
                       {columnMissions.length}

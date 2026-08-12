@@ -14,16 +14,17 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardPanel } from "../ui/card";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { MISSION_TASK_DISPLAY_STATUS_LABELS, type MissionTaskDisplayStatus } from "./missionLabels";
 import { missionDependencyLayers, preflightMissionDependency } from "./MissionTaskGraph.logic";
 
-function taskBadgeVariant(status: string) {
+function taskBadgeVariant(status: MissionTaskDisplayStatus) {
   if (status === "completed") return "success" as const;
   if (status === "integrated") return "success" as const;
   if (status === "failed" || status === "cancelled" || status === "conflicted") {
     return "destructive" as const;
   }
   if (status === "running") return "info" as const;
-  if (status === "blocked" || status === "waiting for dependency") return "warning" as const;
+  if (status === "blocked" || status === "waiting_for_dependency") return "warning" as const;
   return "outline" as const;
 }
 
@@ -141,16 +142,16 @@ export function MissionTaskGraph({
                   (assignedAgent !== null &&
                     hasWritePermission(assignedAgent.permissions) &&
                     task.worktreeId === null);
-                const displayStatus =
+                const displayStatus: MissionTaskDisplayStatus =
                   task.integrationStatus === "integrated"
                     ? "integrated"
                     : task.integrationStatus === "conflicted"
                       ? "conflicted"
                       : task.integrationStatus !== "not_requested"
-                        ? "integration pending"
+                        ? "integration_pending"
                         : waitingForDependency &&
                             (task.status === "backlog" || task.status === "ready")
-                          ? "waiting for dependency"
+                          ? "waiting_for_dependency"
                           : task.status;
                 const addableTasks = orderedTasks.filter(
                   (candidate) =>
@@ -173,7 +174,9 @@ export function MissionTaskGraph({
                               </p>
                             ) : null}
                           </div>
-                          <Badge variant={taskBadgeVariant(displayStatus)}>{displayStatus}</Badge>
+                          <Badge variant={taskBadgeVariant(displayStatus)}>
+                            {MISSION_TASK_DISPLAY_STATUS_LABELS[displayStatus]}
+                          </Badge>
                         </div>
 
                         {task.blockedReason ? (

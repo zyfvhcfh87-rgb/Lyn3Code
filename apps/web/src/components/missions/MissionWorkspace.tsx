@@ -38,6 +38,7 @@ import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Separator } from "../ui/separator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { DefinitionLabel } from "./DefinitionLabel";
 import { MissionDeliverySection, type DeliveryWorkspaceProps } from "../delivery";
 import { CreateTaskDialog, type CreateMissionTaskInput } from "./CreateTaskDialog";
 import { MissionAgentActivity } from "./MissionAgentActivity";
@@ -288,7 +289,7 @@ export function MissionWorkspace({
               <div className="flex items-center gap-2">
                 <ListChecksIcon className="size-4 text-muted-foreground" />
                 <h2 id="mission-tasks-heading" className="text-sm font-semibold">
-                  Task dependency graph
+                  <DefinitionLabel term="task">Task dependency graph</DefinitionLabel>
                 </h2>
                 <span className="text-xs tabular-nums text-muted-foreground">
                   {tasks.filter((task) => task.status === "completed").length}/{tasks.length}
