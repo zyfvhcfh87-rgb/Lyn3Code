@@ -1,5 +1,4 @@
 import {
-  hasWritePermission,
   MissionTaskId,
   type MissionAgent,
   type MissionAgentId,
@@ -14,6 +13,11 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardPanel } from "../ui/card";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import {
+  assignedAgentFor,
+  taskStartBlockedReason,
+  taskWaitingForDependency,
+} from "./MissionBlockers.logic";
 import { MISSION_TASK_DISPLAY_STATUS_LABELS, type MissionTaskDisplayStatus } from "./missionLabels";
 import { missionDependencyLayers, preflightMissionDependency } from "./MissionTaskGraph.logic";
 
@@ -128,20 +132,15 @@ export function MissionTaskGraph({
                 const task = taskById.get(taskId);
                 if (!task) return null;
                 const taskDependencies = dependenciesByTask.get(task.id) ?? [];
-                const waitingForDependency = taskDependencies.some(
-                  (dependency) => taskById.get(dependency.dependsOnTaskId)?.status !== "completed",
-                );
-                const assignedAgent = task.assignedMissionAgentId
-                  ? (agents.find((agent) => agent.id === task.assignedMissionAgentId) ?? null)
-                  : null;
-                const startUnavailable =
-                  waitingForDependency ||
-                  (agents.length > 0 && assignedAgent === null) ||
-                  assignedAgent?.status === "disabled" ||
-                  assignedAgent?.status === "unavailable" ||
-                  (assignedAgent !== null &&
-                    hasWritePermission(assignedAgent.permissions) &&
-                    task.worktreeId === null);
+                const waitingForDependency = taskWaitingForDependency(task, dependencies, taskById);
+                const assignedAgent = assignedAgentFor(task, agents);
+                const startBlockedReason = taskStartBlockedReason({
+                  task,
+                  agents,
+                  assignedAgent,
+                  waitingForDependency,
+                });
+                const startUnavailable = startBlockedReason !== null;
                 const displayStatus: MissionTaskDisplayStatus =
                   task.integrationStatus === "integrated"
                     ? "integrated"
@@ -202,7 +201,12 @@ export function MissionTaskGraph({
                             <select
                               className="h-8 rounded-lg border border-input bg-background px-2 text-sm"
                               value={task.assignedMissionAgentId ?? ""}
-                              disabled={!canMutate || startUnavailable || isTaskPending(task.id)}
+                              // Gated on the run, not on `startUnavailable`: being unassigned is
+                              // one of the reasons a task cannot start, so gating this control on
+                              // it made an unassigned task impossible to assign.
+                              disabled={
+                                !canMutate || task.status === "running" || isTaskPending(task.id)
+                              }
                               onChange={(event) =>
                                 void onAssignTask(
                                   task.id,
@@ -377,7 +381,12 @@ export function MissionTaskGraph({
                           {(task.status === "ready" || task.status === "backlog") && onStartTask ? (
                             <Button
                               size="sm"
-                              disabled={!canMutate || isTaskPending(task.id)}
+                              disabled={!canMutate || startUnavailable || isTaskPending(task.id)}
+                              title={
+                                startBlockedReason
+                                  ? `Cannot start: ${startBlockedReason}.`
+                                  : undefined
+                              }
                               onClick={() => void onStartTask(task.id)}
                             >
                               <PlayIcon /> Start task

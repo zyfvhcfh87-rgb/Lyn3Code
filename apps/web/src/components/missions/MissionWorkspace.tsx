@@ -23,22 +23,16 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
-import {
-  ArrowLeftIcon,
-  CircleAlertIcon,
-  ListChecksIcon,
-  OctagonXIcon,
-  PlayIcon,
-  PlusIcon,
-} from "lucide-react";
+import { ArrowLeftIcon, ListChecksIcon, OctagonXIcon, PlayIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 
-import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Separator } from "../ui/separator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { DefinitionLabel } from "./DefinitionLabel";
+import { missionBlockers } from "./MissionBlockers.logic";
+import { MissionBlockersStrip } from "./MissionBlockersStrip";
 import { MissionDeliverySection, type DeliveryWorkspaceProps } from "../delivery";
 import { CreateTaskDialog, type CreateMissionTaskInput } from "./CreateTaskDialog";
 import { MissionAgentActivity } from "./MissionAgentActivity";
@@ -180,6 +174,15 @@ export function MissionWorkspace({
     Option.getOrNull(AsyncResult.value(verificationResult)) ?? [];
   const activeRuns = agentRuns.filter((run) => isActiveAgentRunStatus(run.status));
   const canStart = STARTABLE_MISSION_STATUSES.has(mission.status);
+  const blockers = missionBlockers({
+    mission,
+    tasks,
+    agents: missionAgents,
+    dependencies: taskDependencies,
+    worktrees: managedWorktrees,
+    verificationSummaries,
+    providerReady,
+  });
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
@@ -249,15 +252,7 @@ export function MissionWorkspace({
               </section>
             ) : null}
 
-            {!providerReady && (canStart || missionAgents.length > 0) ? (
-              <Alert variant="warning">
-                <CircleAlertIcon />
-                <AlertTitle>No provider is ready</AlertTitle>
-                <AlertDescription>
-                  Configure an available provider before starting mission work.
-                </AlertDescription>
-              </Alert>
-            ) : null}
+            <MissionBlockersStrip blockers={blockers} />
 
             <MissionTeamPanel
               mission={mission}

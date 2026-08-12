@@ -13,6 +13,12 @@ import { Button } from "../ui/button";
 import { Card, CardPanel } from "../ui/card";
 import { verificationStatusLabel } from "../verification/verificationDisplay";
 import { DefinitionLabel } from "./DefinitionLabel";
+import {
+  canApproveIntegration,
+  integrationConflicted,
+  integrationPrerequisitesIntegrated,
+  verificationAuthorized,
+} from "./MissionBlockers.logic";
 import { MISSION_INTEGRATION_MODE_LABELS, TASK_INTEGRATION_STATUS_LABELS } from "./missionLabels";
 import { missionDependencyLayers } from "./MissionTaskGraph.logic";
 
@@ -93,22 +99,20 @@ export function MissionIntegrationQueue({
         <ol className="grid gap-2">
           {queuedTasks.map((task, index) => {
             const worktree = task.worktreeId ? (worktreeById.get(task.worktreeId) ?? null) : null;
-            const prerequisiteTasks = dependencies
-              .filter((dependency) => dependency.taskId === task.id)
-              .map((dependency) => taskById.get(dependency.dependsOnTaskId))
-              .filter((candidate): candidate is MissionTask => candidate !== undefined);
-            const dependenciesIntegrated = prerequisiteTasks.every(
-              (dependency) => dependency.integrationStatus === "integrated",
+            const dependenciesIntegrated = integrationPrerequisitesIntegrated(
+              task,
+              dependencies,
+              taskById,
             );
-            const conflicted =
-              task.integrationStatus === "conflicted" || worktree?.status === "conflicted";
+            const conflicted = integrationConflicted(task, worktree);
             const verification = verificationByTask.get(task.id);
-            const verificationAllowed = verification?.authorization.allowed ?? false;
-            const canApprove =
-              task.integrationStatus === "ready" &&
-              dependenciesIntegrated &&
-              !conflicted &&
-              verificationAllowed;
+            const verificationAllowed = verificationAuthorized(verification);
+            const canApprove = canApproveIntegration({
+              task,
+              dependenciesIntegrated,
+              conflicted,
+              verificationAllowed,
+            });
             return (
               <li key={task.id}>
                 <Card className="[content-visibility:auto] [contain-intrinsic-size:auto_10rem]">
