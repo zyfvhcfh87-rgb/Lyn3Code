@@ -1,11 +1,12 @@
 import { PackageCheckIcon } from "lucide-react";
 
-import {
-  DeliveryWorkspace,
-  deliverySnapshotIsEmpty,
-  type DeliveryWorkspaceProps,
-} from "./DeliveryWorkspace";
+import { DeliveryWorkspace, type DeliveryWorkspaceProps } from "./DeliveryWorkspace";
+import { missionDeliveryIsEmpty } from "./deliveryScope";
 
+/**
+ * Expects a snapshot already narrowed by `scopeDeliverySnapshotToMission`, so emptiness is measured
+ * against this mission's activity rather than the project's configuration.
+ */
 export function MissionDeliverySection({
   delivery,
 }: {
@@ -14,7 +15,7 @@ export function MissionDeliverySection({
   if (
     !delivery ||
     delivery.state === "empty" ||
-    (delivery.state === "ready" && deliverySnapshotIsEmpty(delivery.snapshot))
+    (delivery.state === "ready" && missionDeliveryIsEmpty(delivery.snapshot))
   ) {
     return null;
   }

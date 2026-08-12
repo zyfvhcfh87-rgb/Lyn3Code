@@ -32,6 +32,8 @@ import type {
   DeploymentPlanProposalContext,
   ReleasePlanProposalContext,
 } from "../components/delivery/deliveryActions";
+import { scopeDeliverySnapshotToMission } from "../components/delivery";
+import { latestBy } from "../components/delivery/deliveryPresentation";
 import type {
   CreateMissionAgentDraft,
   UpdateMissionAgentDraft,
@@ -168,7 +170,13 @@ function MissionDetailRoute() {
       input: { projectId: deliveryProjectId },
     }),
   );
-  const deliverySnapshot = Option.getOrNull(AsyncResult.value(deliveryResult));
+  const projectDeliverySnapshot = Option.getOrNull(AsyncResult.value(deliveryResult));
+  // Delivery records are stored per project. Everything the mission workspace renders or acts on
+  // must be narrowed to this mission first, or a sibling mission's release state appears here.
+  const deliverySnapshot =
+    projectDeliverySnapshot === null
+      ? null
+      : scopeDeliverySnapshotToMission(projectDeliverySnapshot, missionId);
   const streamError = Option.getOrNull(detailState.error);
   const project = snapshot
     ? (projects.find(
@@ -694,14 +702,28 @@ function MissionDetailRoute() {
   };
 
   const handlePublishDeliveryRelease = async (targetId: string) => {
-    if (!deliverySnapshot) return;
+    if (!deliverySnapshot || !projectDeliverySnapshot) return;
     const plan = deliverySnapshot.releasePlans.find((candidate) => candidate.id === targetId);
-    const connection = deliverySnapshot.mergeReadinessAssessments.at(-1)?.repositoryConnectionId;
-    if (!plan || !connection) {
+    if (!plan) {
+      toastManager.add({
+        type: "error",
+        title: "Release plan unavailable",
+        description: "This release plan is no longer part of the mission.",
+      });
+      return;
+    }
+    // A project connects exactly one GitHub repository, so the target is a project-level fact.
+    // Read it from the most recently observed assessment rather than by array position.
+    const connection = latestBy(
+      projectDeliverySnapshot.mergeReadinessAssessments,
+      (assessment) => assessment.observedAt,
+    )?.repositoryConnectionId;
+    if (!connection) {
       toastManager.add({
         type: "error",
         title: "Release repository unavailable",
-        description: "A source-bound GitHub repository assessment is required before publication.",
+        description:
+          "No merge-readiness assessment has recorded a GitHub repository for this project. Assess readiness before publishing.",
       });
       return;
     }

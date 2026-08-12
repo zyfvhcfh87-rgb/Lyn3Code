@@ -3,6 +3,7 @@ export {
   deliverySnapshotIsEmpty,
   type DeliveryWorkspaceProps,
 } from "./DeliveryWorkspace";
+export { missionDeliveryIsEmpty, scopeDeliverySnapshotToMission } from "./deliveryScope";
 export { MissionDeliverySection } from "./MissionDeliverySection";
 export type {
   DeliveryActionContext,
