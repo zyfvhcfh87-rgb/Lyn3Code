@@ -933,6 +933,8 @@ function MissionDetailRoute() {
     );
   }
 
+  // Connection problems are reported before the terminal state, because reconnecting restores the
+  // rest of the app while a completed mission stays read-only either way.
   const syncMessage =
     environment?.connection.phase === "reconnecting"
       ? "Reconnecting. Showing the last mission snapshot; changes are temporarily disabled."
@@ -942,7 +944,11 @@ function MissionDetailRoute() {
           ? "Showing cached mission data while the live connection resumes."
           : detailState.status === "synchronizing"
             ? "Refreshing mission history from the server..."
-            : null;
+            : snapshot.mission.status === "completed"
+              ? "This mission is completed. Its history is read-only."
+              : snapshot.mission.status === "cancelled"
+                ? "This mission is cancelled. Its history is read-only."
+                : null;
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden bg-background text-foreground">

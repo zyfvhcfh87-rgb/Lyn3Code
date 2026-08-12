@@ -25,6 +25,7 @@ import type { RoutingDecisionDetailView, RoutingDecisionSummaryView } from "../r
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardPanel } from "../ui/card";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MissionHandoffViewer } from "./MissionHandoffViewer";
 import { MissionTimeline } from "./MissionTimeline";
 import { missionEventTimelineItems } from "./MissionTimeline.logic";
@@ -283,7 +284,8 @@ export function MissionAgentActivity({
                         {agent?.displayName ?? run.provider}
                       </h3>
                       <p className="truncate text-xs text-muted-foreground">
-                        {agent?.roleKind ?? "legacy agent"} · {task?.title ?? "Mission-wide run"}
+                        {agent?.roleKind ?? "No assigned agent"} ·{" "}
+                        {task?.title ?? "Mission-wide run"}
                       </p>
                     </div>
                     <Badge variant={run.writeCapable ? "warning" : "outline"}>
@@ -324,9 +326,20 @@ export function MissionAgentActivity({
                         {run.modelSelection?.model ?? "Model not recorded"}
                       </span>
                       <Badge variant="outline">{run.reasoningLevel ?? "model default"}</Badge>
-                      <Badge variant={run.routingDecisionId ? "info" : "warning"}>
-                        {run.routingDecisionId ? "Routed" : "Legacy selection"}
-                      </Badge>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Badge variant={run.routingDecisionId ? "info" : "warning"}>
+                              {run.routingDecisionId ? "Routed" : "Direct selection"}
+                            </Badge>
+                          }
+                        />
+                        <TooltipPopup side="top">
+                          {run.routingDecisionId
+                            ? "The routing policy chose this provider and model."
+                            : "This run used its agent's configured provider and model without a routing decision."}
+                        </TooltipPopup>
+                      </Tooltip>
                     </div>
                   ) : null}
 

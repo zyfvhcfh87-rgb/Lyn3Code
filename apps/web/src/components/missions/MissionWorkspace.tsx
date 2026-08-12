@@ -37,6 +37,7 @@ import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Separator } from "../ui/separator";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MissionDeliverySection, type DeliveryWorkspaceProps } from "../delivery";
 import { CreateTaskDialog, type CreateMissionTaskInput } from "./CreateTaskDialog";
 import { MissionAgentActivity } from "./MissionAgentActivity";
@@ -205,12 +206,22 @@ export function MissionWorkspace({
           <PlusIcon /> Add task
         </Button>
         {canStart && missionAgents.length === 0 ? (
-          <Button
-            disabled={!canMutate || !providerReady || isPending("mission:start")}
-            onClick={() => void onStartMission()}
-          >
-            <PlayIcon /> Start legacy run
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  disabled={!canMutate || !providerReady || isPending("mission:start")}
+                  onClick={() => void onStartMission()}
+                >
+                  <PlayIcon /> Run without a team
+                </Button>
+              }
+            />
+            <TooltipPopup side="bottom">
+              Runs the whole mission as a single agent. Add an agent to split the work across roles
+              with their own worktrees.
+            </TooltipPopup>
+          </Tooltip>
         ) : null}
         {activeRuns.length > 0 ? (
           <Button
@@ -318,6 +329,7 @@ export function MissionWorkspace({
 
             <MissionVerificationPanel
               tasks={tasks}
+              agents={missionAgents}
               summaries={verificationSummaries}
               canMutate={canMutate}
               isPending={isPending}
