@@ -3,7 +3,6 @@ import { Link } from "@tanstack/react-router";
 import {
   isActiveAgentRunStatus,
   type AgentHandoff,
-  type AgentPermission,
   type AgentRole,
   type AgentRun,
   type AgentRunId,
@@ -60,9 +59,8 @@ import { MissionStatusBadge } from "./MissionStatusBadge";
 import { MissionTaskGraph } from "./MissionTaskGraph";
 import {
   MissionTeamPanel,
-  type CreateMissionAgentDraft,
+  type MissionAgentDraft,
   type MissionProviderChoice,
-  type UpdateMissionAgentDraft,
 } from "./MissionTeamPanel";
 import { MissionTimeline } from "./MissionTimeline";
 import { missionEventTimelineItems } from "./MissionTimeline.logic";
@@ -93,10 +91,8 @@ export function MissionWorkspace({
   onStartMission,
   onCancelMission,
   onConfigureTeam,
-  onAddAgent,
-  onUpdateAgent,
+  onSaveAgent,
   onRemoveAgent,
-  onUpdateAgentPermissions,
   onSchedulerAction,
   onAddDependency,
   onRemoveDependency,
@@ -136,14 +132,9 @@ export function MissionWorkspace({
   readonly onAddTask: (input: CreateMissionTaskInput) => Promise<boolean>;
   readonly onStartMission: () => Promise<void>;
   readonly onCancelMission: () => Promise<void>;
-  readonly onConfigureTeam: (settings: MissionTeamSettings) => Promise<void>;
-  readonly onAddAgent: (draft: CreateMissionAgentDraft) => Promise<void>;
-  readonly onUpdateAgent: (draft: UpdateMissionAgentDraft) => Promise<void>;
+  readonly onConfigureTeam: (settings: MissionTeamSettings) => Promise<boolean>;
+  readonly onSaveAgent: (draft: MissionAgentDraft) => Promise<boolean>;
   readonly onRemoveAgent: (missionAgentId: MissionAgentId) => Promise<void>;
-  readonly onUpdateAgentPermissions: (
-    missionAgentId: MissionAgentId,
-    permissions: ReadonlyArray<AgentPermission>,
-  ) => Promise<void>;
   readonly onSchedulerAction: (action: "start" | "pause" | "resume") => Promise<void>;
   readonly onAddDependency: (
     taskId: MissionTaskId,
@@ -356,10 +347,8 @@ export function MissionWorkspace({
                 canMutate={canMutate}
                 isPending={isPending}
                 onConfigure={onConfigureTeam}
-                onAddAgent={onAddAgent}
-                onUpdateAgent={onUpdateAgent}
+                onSaveAgent={onSaveAgent}
                 onRemoveAgent={onRemoveAgent}
-                onUpdatePermissions={onUpdateAgentPermissions}
                 onSchedulerAction={onSchedulerAction}
               />
 

@@ -39,10 +39,7 @@ import {
   type MissionTab,
 } from "../components/missions/missionTabs";
 import { latestBy } from "../components/delivery/deliveryPresentation";
-import type {
-  CreateMissionAgentDraft,
-  UpdateMissionAgentDraft,
-} from "../components/missions/MissionTeamPanel";
+import type { MissionAgentDraft } from "../components/missions/MissionTeamPanel";
 import { MissionWorkspace } from "../components/missions/MissionWorkspace";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Button } from "../components/ui/button";
@@ -304,7 +301,7 @@ function MissionDetailRoute() {
   };
 
   const handleConfigureTeam = async (settings: MissionTeamSettings) => {
-    await runAction(
+    return await runAction(
       "team-settings",
       "Failed to update team settings",
       () =>
@@ -313,39 +310,6 @@ function MissionDetailRoute() {
           input: { missionId, settings, updatedAt: new Date().toISOString() },
         }),
       "Team settings updated",
-    );
-  };
-
-  const handleAddAgent = async (draft: CreateMissionAgentDraft) => {
-    if (!snapshot) return;
-    const now = new Date().toISOString();
-    const role = snapshot.agentRoles.find((candidate) => candidate.kind === draft.roleKind);
-    await runAction(
-      "agent:add",
-      "Failed to add agent",
-      () =>
-        upsertAgent({
-          environmentId,
-          input: {
-            missionId,
-            agent: {
-              id: newMissionAgentId(),
-              missionId,
-              roleId: role?.id ?? null,
-              roleKind: draft.roleKind,
-              displayName: draft.displayName,
-              providerInstanceId: draft.providerInstanceId,
-              model: draft.model,
-              reasoningLevel: null,
-              permissions: role?.defaultPermissions ?? FALLBACK_PERMISSIONS[draft.roleKind],
-              maximumConcurrentRuns: 1,
-              status: "idle",
-              createdAt: now,
-              updatedAt: now,
-            },
-          },
-        }),
-      "Agent added",
     );
   };
 
@@ -362,56 +326,76 @@ function MissionDetailRoute() {
     );
   };
 
-  const handleUpdateAgent = async (draft: UpdateMissionAgentDraft) => {
-    const agent = snapshot?.missionAgents.find(
-      (candidate) => candidate.id === draft.missionAgentId,
-    );
-    if (!agent || !snapshot) return;
+  /**
+   * One save for the whole agent slot.
+   *
+   * `mission.agent.upsert` carries the full record including permissions, so a single command
+   * expresses the edit. A permission change additionally dispatches
+   * `mission.agent.permissions.update`, because collapsing it into the upsert would drop the
+   * distinct `mission.agent-permissions-updated` entry from mission history.
+   */
+  const handleSaveAgent = async (draft: MissionAgentDraft) => {
+    if (!snapshot) return false;
+    const now = new Date().toISOString();
     const role = snapshot.agentRoles.find((candidate) => candidate.kind === draft.roleKind);
-    await runAction(
-      `agent:${agent.id}`,
-      "Failed to update agent",
+    const existing = draft.missionAgentId
+      ? (snapshot.missionAgents.find((candidate) => candidate.id === draft.missionAgentId) ?? null)
+      : null;
+    const missionAgentId = existing?.id ?? newMissionAgentId();
+    const permissionsChanged =
+      existing !== null &&
+      (existing.permissions.length !== draft.permissions.length ||
+        existing.permissions.some((permission) => !draft.permissions.includes(permission)));
+
+    const saved = await runAction(
+      existing ? `agent:${existing.id}` : "agent:add",
+      existing ? "Failed to update agent" : "Failed to add agent",
       () =>
         upsertAgent({
           environmentId,
           input: {
             missionId,
             agent: {
-              ...agent,
+              id: missionAgentId,
+              missionId,
               roleId: role?.id ?? null,
               roleKind: draft.roleKind,
               displayName: draft.displayName,
               providerInstanceId: draft.providerInstanceId,
               model: draft.model,
+              reasoningLevel: existing?.reasoningLevel ?? null,
+              permissions:
+                draft.permissions.length > 0
+                  ? draft.permissions
+                  : (role?.defaultPermissions ?? FALLBACK_PERMISSIONS[draft.roleKind]),
               maximumConcurrentRuns: draft.maximumConcurrentRuns,
               status: draft.status,
-              updatedAt: new Date().toISOString(),
+              createdAt: existing?.createdAt ?? now,
+              updatedAt: now,
             },
           },
         }),
-      "Agent updated",
+      existing ? "Agent updated" : "Agent added",
     );
-  };
 
-  const handleUpdatePermissions = async (
-    missionAgentId: MissionAgentId,
-    permissions: ReadonlyArray<AgentPermission>,
-  ) => {
-    await runAction(
-      `permissions:${missionAgentId}`,
-      "Failed to update permissions",
-      () =>
-        updateAgentPermissions({
-          environmentId,
-          input: {
-            missionId,
-            missionAgentId,
-            permissions,
-            updatedAt: new Date().toISOString(),
-          },
-        }),
-      "Permissions updated",
-    );
+    if (saved && permissionsChanged) {
+      await runAction(
+        `permissions:${missionAgentId}`,
+        "Failed to record the permission change",
+        () =>
+          updateAgentPermissions({
+            environmentId,
+            input: {
+              missionId,
+              missionAgentId,
+              permissions: draft.permissions,
+              updatedAt: new Date().toISOString(),
+            },
+          }),
+      );
+    }
+
+    return saved;
   };
 
   const handleSchedulerAction = async (action: "start" | "pause" | "resume") => {
@@ -1019,10 +1003,8 @@ function MissionDetailRoute() {
         onStartMission={() => startRun()}
         onCancelMission={handleCancelMission}
         onConfigureTeam={handleConfigureTeam}
-        onAddAgent={handleAddAgent}
-        onUpdateAgent={handleUpdateAgent}
+        onSaveAgent={handleSaveAgent}
         onRemoveAgent={handleRemoveAgent}
-        onUpdateAgentPermissions={handleUpdatePermissions}
         onSchedulerAction={handleSchedulerAction}
         onAddDependency={handleAddDependency}
         onRemoveDependency={handleRemoveDependency}

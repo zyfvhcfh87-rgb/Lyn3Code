@@ -633,7 +633,8 @@ export function MissionRoutingWorkspacePanel({
   readonly mission: Mission;
   readonly tasks: ReadonlyArray<MissionTask>;
   readonly canMutate: boolean;
-  readonly onConfigureTeam: (settings: MissionTeamSettings) => Promise<void>;
+  /** Resolves to whether the change was accepted; this panel only needs it to have completed. */
+  readonly onConfigureTeam: (settings: MissionTeamSettings) => Promise<unknown>;
 }) {
   const navigate = useNavigate();
   const registryResult = useAtomValue(
