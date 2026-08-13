@@ -326,6 +326,18 @@ function MissionDetailRoute() {
     const existing = draft.missionAgentId
       ? (snapshot.missionAgents.find((candidate) => candidate.id === draft.missionAgentId) ?? null)
       : null;
+    // The draft names a slot that is no longer in the snapshot, so it was removed elsewhere while
+    // this editor was open. Minting a new id would silently resurrect it under a different
+    // identity, detaching it from its own history; report the conflict instead.
+    if (draft.missionAgentId !== null && existing === null) {
+      toastManager.add({
+        type: "error",
+        title: "This agent slot no longer exists",
+        description:
+          "It was removed elsewhere. Close the editor and add a new slot if you need it.",
+      });
+      return false;
+    }
     const missionAgentId = existing?.id ?? newMissionAgentId();
     const permissionsChanged =
       existing !== null &&

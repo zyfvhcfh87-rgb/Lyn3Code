@@ -249,7 +249,12 @@ export function MissionTeamPanel({
         agent={editorAgent}
         roles={roles}
         providerChoices={providerChoices}
-        isSubmitting={isPending(editorAgent ? `agent:${editorAgent.id}` : "agent:add")}
+        // A permission change runs under its own key after the upsert, so both belong to one save.
+        isSubmitting={
+          editorAgent
+            ? isPending(`agent:${editorAgent.id}`) || isPending(`permissions:${editorAgent.id}`)
+            : isPending("agent:add")
+        }
         onOpenChange={setEditorOpen}
         onSave={onSaveAgent}
       />

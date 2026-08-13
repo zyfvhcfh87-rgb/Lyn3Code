@@ -171,6 +171,11 @@ function MissionAgentEditorForm({
   const [permissions, setPermissions] = useState<ReadonlyArray<AgentPermission>>(
     agent?.permissions ?? defaultPermissionsFor("implementer", roles),
   );
+  // A permission change saves as two sequential commands, and the route clears each pending key
+  // before the next is set - so a caller-supplied flag goes false between them. This covers the
+  // whole await, which is what stops a second submission landing in that gap.
+  const [isSaving, setIsSaving] = useState(false);
+  const submitting = isSaving || isSubmitting;
 
   const providerModels = modelChoices.filter(
     (choice) => choice.providerInstanceId === providerInstanceId,
@@ -191,7 +196,7 @@ function MissionAgentEditorForm({
     providerInstanceId.length > 0 &&
     Number.isInteger(maximumConcurrentRuns) &&
     maximumConcurrentRuns >= 1 &&
-    !isSubmitting;
+    !submitting;
 
   const handleRoleChange = (next: AgentRoleKind) => {
     setRoleKind(next);
@@ -202,17 +207,22 @@ function MissionAgentEditorForm({
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canSubmit) return;
-    const saved = await onSave({
-      missionAgentId: agent?.id ?? null,
-      displayName: trimmedName,
-      roleKind,
-      providerInstanceId: providerInstanceId as ProviderInstanceId,
-      model: model.trim() || null,
-      maximumConcurrentRuns,
-      status,
-      permissions,
-    });
-    if (saved) onOpenChange(false);
+    setIsSaving(true);
+    try {
+      const saved = await onSave({
+        missionAgentId: agent?.id ?? null,
+        displayName: trimmedName,
+        roleKind,
+        providerInstanceId: providerInstanceId as ProviderInstanceId,
+        model: model.trim() || null,
+        maximumConcurrentRuns,
+        status,
+        permissions,
+      });
+      if (saved) onOpenChange(false);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const roleLabel = (kind: AgentRoleKind) =>
@@ -380,13 +390,13 @@ function MissionAgentEditorForm({
         <Button
           type="button"
           variant="outline"
-          disabled={isSubmitting}
+          disabled={submitting}
           onClick={() => onOpenChange(false)}
         >
           Cancel
         </Button>
         <Button type="submit" disabled={!canSubmit}>
-          {isSubmitting ? "Saving..." : agent ? "Save agent" : "Add agent"}
+          {submitting ? "Saving..." : agent ? "Save agent" : "Add agent"}
         </Button>
       </DialogFooter>
     </form>
