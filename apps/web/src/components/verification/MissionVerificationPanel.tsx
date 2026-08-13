@@ -1,38 +1,21 @@
-import {
-  hasWritePermission,
-  type MissionAgent,
-  type MissionAgentId,
-  type MissionTask,
-  type MissionTaskId,
-  type VerificationRunId,
-  type VerificationTaskSummary,
+import type {
+  MissionAgent,
+  MissionTask,
+  MissionTaskId,
+  VerificationRunId,
+  VerificationTaskSummary,
 } from "@t3tools/contracts";
 import { ClipboardCheckIcon, EyeIcon, PlayIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 
 import { Button } from "../ui/button";
 import { Card, CardPanel } from "../ui/card";
 import { DefinitionLabel } from "../missions/DefinitionLabel";
+import { MissionSectionLink } from "../missions/MissionSectionLink";
+import { verifiableTasks, verificationRunBlockedReason } from "./MissionVerificationPanel.logic";
 import { VerificationStatusBadge } from "./VerificationStatusBadge";
 
 const EMPTY_MISSION_AGENTS: ReadonlyArray<MissionAgent> = [];
-
-/**
- * Verification binds evidence to a worktree's exact source state, so a task that will never hold a
- * worktree can never hold evidence. Only exclude what is provably read-only: a task assigned to an
- * agent without write permission, with no worktree and no evidence of its own. An unassigned task
- * stays listed because it may still be given to a writer.
- */
-function canHoldVerificationEvidence(
-  task: MissionTask,
-  agentsById: ReadonlyMap<MissionAgentId, MissionAgent>,
-  summary: VerificationTaskSummary | undefined,
-): boolean {
-  if (summary !== undefined || task.worktreeId !== null) return true;
-  const agent = task.assignedMissionAgentId
-    ? (agentsById.get(task.assignedMissionAgentId) ?? null)
-    : null;
-  return agent === null || hasWritePermission(agent.permissions);
-}
 
 export function MissionVerificationPanel({
   tasks,
@@ -52,10 +35,7 @@ export function MissionVerificationPanel({
   readonly onOpenRun: (runId: VerificationRunId) => void;
 }) {
   const byTask = new Map(summaries.map((summary) => [summary.taskId, summary] as const));
-  const agentsById = new Map(agents.map((agent) => [agent.id, agent] as const));
-  const verifiableTasks = tasks.filter((task) =>
-    canHoldVerificationEvidence(task, agentsById, byTask.get(task.id)),
-  );
+  const visibleTasks = verifiableTasks(tasks, agents, summaries);
 
   return (
     <section aria-labelledby="mission-verification-heading" className="grid gap-3">
@@ -67,21 +47,24 @@ export function MissionVerificationPanel({
         <span className="text-xs text-muted-foreground">
           Evidence attached to exact source states
         </span>
+        <MissionSectionLink render={<Link to="/settings/verification" />}>
+          Profiles
+        </MissionSectionLink>
       </div>
 
-      {verifiableTasks.length === 0 ? (
+      {visibleTasks.length === 0 ? (
         <p className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
           No task can hold verification evidence yet. Verification runs against a task&rsquo;s
           worktree, so add a task that edits the repository first.
         </p>
       ) : (
         <div className="grid gap-2">
-          {verifiableTasks.map((task) => {
+          {visibleTasks.map((task) => {
             const summary = byTask.get(task.id);
             const status = summary?.repairRunning
               ? "running"
               : (summary?.authorization.status ?? "missing");
-            const awaitingWorktree = task.worktreeId === null;
+            const runBlockedReason = verificationRunBlockedReason(task);
             return (
               <Card
                 key={task.id}
@@ -93,9 +76,7 @@ export function MissionVerificationPanel({
                     <p className="mt-1 truncate text-xs text-muted-foreground">
                       {summary?.latestRun
                         ? `${summary.latestRun.profileName} - ${summary.latestRun.branchName} - ${summary.latestRun.sourceFingerprint.slice(0, 12)}`
-                        : awaitingWorktree
-                          ? "Needs a worktree. Start this task before requesting verification."
-                          : "No verification evidence recorded"}
+                        : (runBlockedReason ?? "No verification evidence recorded")}
                     </p>
                   </div>
                   <VerificationStatusBadge status={status} />
@@ -110,7 +91,10 @@ export function MissionVerificationPanel({
                   ) : null}
                   <Button
                     size="sm"
-                    disabled={!canMutate || awaitingWorktree || isPending(`verify:${task.id}`)}
+                    disabled={
+                      !canMutate || runBlockedReason !== null || isPending(`verify:${task.id}`)
+                    }
+                    title={runBlockedReason ?? undefined}
                     onClick={() => void onRequest(task.id)}
                   >
                     <PlayIcon /> {summary?.latestRun ? "Rerun profile" : "Run verification"}

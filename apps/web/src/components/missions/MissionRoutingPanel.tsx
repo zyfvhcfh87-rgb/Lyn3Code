@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   IsoDateTime,
   ModelProfileId,
@@ -32,6 +32,8 @@ import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
+import { DefinitionLabel } from "./DefinitionLabel";
+import { MissionSectionLink } from "./MissionSectionLink";
 import type {
   MissionRoutingPolicyDraft,
   RoutingSelectOption,
@@ -312,11 +314,14 @@ export function MissionRoutingPanel({
       <div className="flex flex-wrap items-center gap-2">
         <RouteIcon className="size-4 text-muted-foreground" />
         <h2 id="mission-routing-heading" className="text-sm font-semibold">
-          Routing
+          <DefinitionLabel term="routing">Routing</DefinitionLabel>
         </h2>
         <Badge variant={draft.inheritProjectPolicy ? "outline" : "info"}>
           {draft.inheritProjectPolicy ? "Project policy" : "Mission override"}
         </Badge>
+        <MissionSectionLink render={<Link to="/settings/routing" />}>
+          Providers and models
+        </MissionSectionLink>
       </div>
 
       <div className="grid gap-4 rounded-xl border border-border p-4">

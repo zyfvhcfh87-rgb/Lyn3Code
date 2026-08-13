@@ -23,10 +23,21 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { ArrowLeftIcon, ListChecksIcon, OctagonXIcon, PlayIcon, PlusIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  BrainIcon,
+  ChartLineIcon,
+  EllipsisIcon,
+  GithubIcon,
+  ListChecksIcon,
+  OctagonXIcon,
+  PlayIcon,
+  PlusIcon,
+} from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
 import { Separator } from "../ui/separator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -236,6 +247,38 @@ export function MissionWorkspace({
             <OctagonXIcon /> Cancel mission ({activeRuns.length})
           </Button>
         ) : null}
+        <Menu>
+          <MenuTrigger
+            render={<Button size="icon" variant="ghost" aria-label="More mission views" />}
+          >
+            <EllipsisIcon />
+          </MenuTrigger>
+          <MenuPopup align="end">
+            <MenuItem
+              render={
+                <Link
+                  to="/memory/$environmentId/$projectId"
+                  params={{ environmentId, projectId: mission.projectId }}
+                />
+              }
+            >
+              <BrainIcon /> Project memory
+            </MenuItem>
+            <MenuItem render={<Link to="/settings/analytics" />}>
+              <ChartLineIcon /> Usage and cost
+            </MenuItem>
+            <MenuItem
+              render={
+                <Link
+                  to="/github/$environmentId/$projectId"
+                  params={{ environmentId, projectId: mission.projectId }}
+                />
+              }
+            >
+              <GithubIcon /> GitHub workspace
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
       </header>
 
       <ScrollArea className="min-h-0 flex-1" scrollbarGutter>
@@ -347,6 +390,7 @@ export function MissionWorkspace({
             />
 
             <MissionIntegrationQueue
+              environmentId={environmentId}
               mission={mission}
               tasks={tasks}
               dependencies={taskDependencies}

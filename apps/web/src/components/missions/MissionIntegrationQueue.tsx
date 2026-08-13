@@ -1,4 +1,5 @@
 import type {
+  EnvironmentId,
   ManagedWorktree,
   Mission,
   MissionTask,
@@ -7,6 +8,7 @@ import type {
   VerificationTaskSummary,
 } from "@t3tools/contracts";
 import { CheckIcon, GitMergeIcon, TriangleAlertIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -20,6 +22,7 @@ import {
   verificationAuthorized,
 } from "./MissionBlockers.logic";
 import { MISSION_INTEGRATION_MODE_LABELS, TASK_INTEGRATION_STATUS_LABELS } from "./missionLabels";
+import { MissionSectionLink } from "./MissionSectionLink";
 import { missionDependencyLayers } from "./MissionTaskGraph.logic";
 
 const QUEUED_INTEGRATION_STATUSES = new Set<MissionTask["integrationStatus"]>([
@@ -38,6 +41,7 @@ function integrationBadgeVariant(status: MissionTask["integrationStatus"]) {
 }
 
 export function MissionIntegrationQueue({
+  environmentId,
   mission,
   tasks,
   dependencies,
@@ -48,6 +52,7 @@ export function MissionIntegrationQueue({
   onApprove,
   onAbort,
 }: {
+  readonly environmentId: EnvironmentId;
   readonly mission: Mission;
   readonly tasks: ReadonlyArray<MissionTask>;
   readonly dependencies: ReadonlyArray<TaskDependency>;
@@ -89,6 +94,16 @@ export function MissionIntegrationQueue({
         <span className="text-xs tabular-nums text-muted-foreground">
           {queuedTasks.length} waiting
         </span>
+        <MissionSectionLink
+          render={
+            <Link
+              to="/github/$environmentId/$projectId"
+              params={{ environmentId, projectId: mission.projectId }}
+            />
+          }
+        >
+          Branches and pull requests
+        </MissionSectionLink>
       </div>
 
       {queuedTasks.length === 0 ? (

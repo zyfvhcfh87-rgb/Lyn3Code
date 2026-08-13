@@ -1,17 +1,18 @@
 import { PackageCheckIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { DefinitionLabel } from "../missions/DefinitionLabel";
 import { DeliveryWorkspace, type DeliveryWorkspaceProps } from "./DeliveryWorkspace";
 import { missionDeliveryIsEmpty } from "./deliveryScope";
 import { DeliveryNotice } from "./DeliveryPrimitives";
 
-function DeliverySection({ children }: { children: ReactNode }) {
+function DeliverySection({ children }: { readonly children: ReactNode }) {
   return (
     <section aria-labelledby="mission-delivery-heading" className="grid gap-3">
       <div className="flex items-center gap-2">
         <PackageCheckIcon className="size-4 text-muted-foreground" />
         <h2 id="mission-delivery-heading" className="text-sm font-semibold">
-          Delivery
+          <DefinitionLabel term="delivery">Delivery</DefinitionLabel>
         </h2>
       </div>
       {children}
@@ -30,7 +31,7 @@ function DeliverySection({ children }: { children: ReactNode }) {
 export function MissionDeliverySection({
   delivery,
 }: {
-  delivery?: DeliveryWorkspaceProps | undefined;
+  readonly delivery?: DeliveryWorkspaceProps | undefined;
 }) {
   if (!delivery) return null;
 
