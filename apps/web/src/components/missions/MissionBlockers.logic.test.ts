@@ -256,6 +256,33 @@ describe("missionBlockers", () => {
     expect(result[0]!.message).toBe('Task "Implement the parser" is blocked: Dependency failed.');
   });
 
+  // A failed task leaves `liveTasks`, and only the user can retry it, so it must be reported or the
+  // mission reads as clear while stopped.
+  it("reports a failed task that still has attempts left", () => {
+    const result = missionBlockers(
+      input({ tasks: [task({ status: "failed", attemptCount: 1, maximumAttempts: 3 })] }),
+    );
+    const retryable = result.find((blocker) => blocker.id === "task-failed-retryable");
+
+    expect(retryable?.severity).toBe("blocker");
+    expect(retryable?.anchor).toBe("mission-tasks-heading");
+    expect(ids(result)).not.toContain("task-attempts-exhausted");
+  });
+
+  it("separates a retryable failure from an exhausted one", () => {
+    const result = missionBlockers(
+      input({
+        tasks: [
+          task({ id: "retryable", status: "failed", attemptCount: 1, maximumAttempts: 3 }),
+          task({ id: "exhausted", status: "failed", attemptCount: 3, maximumAttempts: 3 }),
+        ],
+      }),
+    );
+
+    expect(ids(result)).toContain("task-failed-retryable");
+    expect(ids(result)).toContain("task-attempts-exhausted");
+  });
+
   it("reports tasks that exhausted every attempt", () => {
     expect(
       ids(

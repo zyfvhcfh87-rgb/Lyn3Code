@@ -258,9 +258,22 @@ export function missionBlockers(input: MissionBlockersInput): ReadonlyArray<Miss
     });
   }
 
-  const exhaustedTasks = tasks.filter(
-    (task) => task.status === "failed" && task.attemptCount >= task.maximumAttempts,
-  );
+  // A failed task leaves `liveTasks`, so without its own branch it disappears from the summary
+  // entirely. Nothing retries it either - `task.retry-requested` only ever originates from the user
+  // - so a mission with one sits stopped while reporting nothing.
+  const failedTasks = tasks.filter((task) => task.status === "failed");
+  const retryableTasks = failedTasks.filter((task) => task.attemptCount < task.maximumAttempts);
+  const exhaustedTasks = failedTasks.filter((task) => task.attemptCount >= task.maximumAttempts);
+
+  if (retryableTasks.length > 0) {
+    blockers.push({
+      id: "task-failed-retryable",
+      severity: "blocker",
+      message: `${pluralize(retryableTasks.length, "task")} failed and ${retryableTasks.length === 1 ? "is" : "are"} waiting to be retried. Nothing restarts them on its own.`,
+      anchor: MISSION_SECTION_ANCHORS.tasks,
+    });
+  }
+
   if (exhaustedTasks.length > 0) {
     blockers.push({
       id: "task-attempts-exhausted",
