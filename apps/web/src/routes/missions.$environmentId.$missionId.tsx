@@ -30,7 +30,10 @@ import type {
   DeploymentPlanProposalContext,
   ReleasePlanProposalContext,
 } from "../components/delivery/deliveryActions";
-import { scopeDeliverySnapshotToMission } from "../components/delivery";
+import {
+  scopeDeliverySnapshotToMission,
+  type DeliveryWorkspaceProps,
+} from "../components/delivery";
 import {
   DEFAULT_MISSION_TAB,
   isMissionTab,
@@ -906,6 +909,45 @@ function MissionDetailRoute() {
     );
   }
 
+  // The Ship tab is a whole panel now, so an absent snapshot has to say why rather than render
+  // nothing: a failed subscription would otherwise leave the tab permanently blank.
+  const deliveryActions = canOperateDelivery
+    ? {
+        onRequestApproval: ({ targetId, reason }: { targetId: string; reason: string }) =>
+          handleRequestDeliveryApproval(targetId, reason),
+        onDecideApproval: ({
+          targetId,
+          decision,
+          reason,
+        }: {
+          targetId: string;
+          decision: "approve" | "reject";
+          reason: string;
+        }) => handleDecideDeliveryApproval(targetId, decision, reason),
+        onExecuteMerge: ({ targetId }: { targetId: string }) =>
+          handleExecuteDeliveryMerge(targetId),
+        onCreateReleasePlan: handleProposeDeliveryRelease,
+        onExecuteRelease: ({ targetId }: { targetId: string }) =>
+          handlePublishDeliveryRelease(targetId),
+        onCreateDeploymentPlan: handleProposeDeliveryDeployment,
+        onExecuteDeployment: ({ targetId }: { targetId: string }) =>
+          handleExecuteDeliveryDeployment(targetId),
+        onCancelDeployment: ({ targetId, reason }: { targetId: string; reason: string }) =>
+          handleCancelDeliveryDeployment(targetId, reason),
+        onExecuteRollback: ({ targetId }: { targetId: string }) =>
+          handleExecuteDeliveryRollback(targetId),
+      }
+    : undefined;
+  const deliveryProps: DeliveryWorkspaceProps =
+    deliveryResult._tag === "Failure"
+      ? {
+          state: "error",
+          error: "The delivery subscription for this project could not be loaded.",
+        }
+      : deliverySnapshot === null || deliverySnapshot.projectId !== snapshot.mission.projectId
+        ? { state: "loading" }
+        : { state: "ready", snapshot: deliverySnapshot, actions: deliveryActions };
+
   // Connection problems are reported before the terminal state, because reconnecting restores the
   // rest of the app while a completed mission stays read-only either way.
   const syncMessage =
@@ -952,31 +994,7 @@ function MissionDetailRoute() {
         managedWorktrees={snapshot.managedWorktrees}
         agentHandoffs={snapshot.agentHandoffs}
         events={snapshot.events}
-        delivery={
-          deliverySnapshot === null || deliverySnapshot.projectId !== snapshot.mission.projectId
-            ? undefined
-            : {
-                state: "ready",
-                snapshot: deliverySnapshot,
-                actions: canOperateDelivery
-                  ? {
-                      onRequestApproval: ({ targetId, reason }) =>
-                        handleRequestDeliveryApproval(targetId, reason),
-                      onDecideApproval: ({ targetId, decision, reason }) =>
-                        handleDecideDeliveryApproval(targetId, decision, reason),
-                      onExecuteMerge: ({ targetId }) => handleExecuteDeliveryMerge(targetId),
-                      onCreateReleasePlan: handleProposeDeliveryRelease,
-                      onExecuteRelease: ({ targetId }) => handlePublishDeliveryRelease(targetId),
-                      onCreateDeploymentPlan: handleProposeDeliveryDeployment,
-                      onExecuteDeployment: ({ targetId }) =>
-                        handleExecuteDeliveryDeployment(targetId),
-                      onCancelDeployment: ({ targetId, reason }) =>
-                        handleCancelDeliveryDeployment(targetId, reason),
-                      onExecuteRollback: ({ targetId }) => handleExecuteDeliveryRollback(targetId),
-                    }
-                  : undefined,
-              }
-        }
+        delivery={deliveryProps}
         providerChoices={providerChoices}
         canMutate={canMutate}
         providerReady={providerChoices.length > 0}

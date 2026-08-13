@@ -183,8 +183,11 @@ export function MissionWorkspace({
       input: { projectId: mission.projectId, taskIds: tasks.map((task) => task.id) },
     }),
   );
-  const verificationSummaries: ReadonlyArray<VerificationTaskSummary> =
-    Option.getOrNull(AsyncResult.value(verificationResult)) ?? [];
+  const verificationValue = Option.getOrNull(AsyncResult.value(verificationResult));
+  const verificationSummaries: ReadonlyArray<VerificationTaskSummary> = verificationValue ?? [];
+  // A settled request that returned nothing genuinely means no evidence; an unsettled or failed one
+  // means not yet known, and the two must not read the same in the summary.
+  const verificationEvidenceLoaded = verificationValue !== null;
   const activeRuns = agentRuns.filter((run) => isActiveAgentRunStatus(run.status));
   const canStart = STARTABLE_MISSION_STATUSES.has(mission.status);
   const tabCounts: Readonly<Record<MissionTab, string | null>> = {
@@ -216,6 +219,7 @@ export function MissionWorkspace({
     dependencies: taskDependencies,
     worktrees: managedWorktrees,
     verificationSummaries,
+    verificationEvidenceLoaded,
     providerReady,
   });
 

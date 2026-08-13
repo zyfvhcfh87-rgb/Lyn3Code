@@ -101,6 +101,7 @@ function input(overrides: Partial<MissionBlockersInput> = {}): MissionBlockersIn
     dependencies: [] as ReadonlyArray<TaskDependency>,
     worktrees: [worktree()],
     verificationSummaries: [],
+    verificationEvidenceLoaded: true,
     providerReady: true,
     ...overrides,
   };
@@ -302,6 +303,36 @@ describe("missionBlockers", () => {
 
     expect(ids(result)).toContain("integration-conflicted");
     expect(ids(result)).not.toContain("integration-failed");
+  });
+
+  // While the evidence request is unsettled an absent summary means "not known yet", so reporting
+  // it would accuse every pending branch of missing verification on each page load.
+  it("withholds evidence-dependent blockers until the summaries request settles", () => {
+    const result = missionBlockers(
+      input({
+        tasks: [task({ integrationStatus: "ready" })],
+        verificationSummaries: [],
+        verificationEvidenceLoaded: false,
+      }),
+    );
+
+    expect(ids(result)).not.toContain("integration-verification");
+    expect(ids(result)).not.toContain("integration-approval");
+  });
+
+  it("still reports conflicts and failures before the evidence request settles", () => {
+    const conflicted = missionBlockers(
+      input({
+        tasks: [task({ integrationStatus: "conflicted" })],
+        verificationEvidenceLoaded: false,
+      }),
+    );
+    const failed = missionBlockers(
+      input({ tasks: [task({ integrationStatus: "failed" })], verificationEvidenceLoaded: false }),
+    );
+
+    expect(ids(conflicted)).toContain("integration-conflicted");
+    expect(ids(failed)).toContain("integration-failed");
   });
 
   it("reports branches held back by missing verification evidence", () => {

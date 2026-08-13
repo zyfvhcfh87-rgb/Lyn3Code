@@ -145,6 +145,12 @@ export interface MissionBlockersInput {
   readonly dependencies: ReadonlyArray<TaskDependency>;
   readonly worktrees: ReadonlyArray<ManagedWorktree>;
   readonly verificationSummaries: ReadonlyArray<VerificationTaskSummary>;
+  /**
+   * Whether `verificationSummaries` reflects a settled request. While it does not, an absent
+   * summary means "not known yet" rather than "no evidence", and reporting the difference as a
+   * blocker would accuse every pending branch of missing verification on every page load.
+   */
+  readonly verificationEvidenceLoaded: boolean;
   readonly providerReady: boolean;
 }
 
@@ -155,8 +161,16 @@ export interface MissionBlockersInput {
  * a reader can act on.
  */
 export function missionBlockers(input: MissionBlockersInput): ReadonlyArray<MissionBlocker> {
-  const { mission, tasks, agents, dependencies, worktrees, verificationSummaries, providerReady } =
-    input;
+  const {
+    mission,
+    tasks,
+    agents,
+    dependencies,
+    worktrees,
+    verificationSummaries,
+    verificationEvidenceLoaded,
+    providerReady,
+  } = input;
 
   if (mission.status === "completed" || mission.status === "cancelled") return [];
 
@@ -275,6 +289,9 @@ export function missionBlockers(input: MissionBlockersInput): ReadonlyArray<Miss
     // and it can never reach the approvable `ready` state on its own, so it is counted before the
     // waiting states rather than falling through them unreported.
     else if (task.integrationStatus === "failed") failedCount += 1;
+    // Conflicts and failures are readable from task and worktree state alone. Everything below
+    // needs verification evidence, so it waits until that request has settled.
+    else if (!verificationEvidenceLoaded) continue;
     else if (!verificationAllowed) awaitingVerification += 1;
     else if (!dependenciesIntegrated) awaitingPrerequisites += 1;
     else if (
