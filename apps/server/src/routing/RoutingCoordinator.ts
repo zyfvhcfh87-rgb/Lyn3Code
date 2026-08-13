@@ -1032,15 +1032,21 @@ export const make = Effect.gen(function* () {
       );
     }
     const requiredContextTokens = assessment.estimatedContextTokens ?? 0;
-    const hardContextLimit =
-      selected.candidate.capabilitySnapshot.contextLimits.maximumInputTokens!;
+    // A provider may decline to report context limits, and the routing engine now allows such a
+    // model when only the task's own estimate sets the target. There is therefore no guaranteed
+    // ceiling to budget against: reserve exactly what the task needs and grant no optional
+    // retrieval budget, rather than inventing a limit or treating the unknown as zero.
+    const hardContextLimit = selected.candidate.capabilitySnapshot.contextLimits.maximumInputTokens;
     const preferredContextLimit =
       selected.candidate.capabilitySnapshot.contextLimits.recommendedWorkingContext ??
       hardContextLimit;
-    const contextTarget = Math.min(
-      hardContextLimit,
-      Math.max(requiredContextTokens, preferredContextLimit),
-    );
+    const contextTarget =
+      hardContextLimit === null
+        ? (preferredContextLimit ?? requiredContextTokens)
+        : Math.min(
+            hardContextLimit,
+            Math.max(requiredContextTokens, preferredContextLimit ?? hardContextLimit),
+          );
     const optionalContextTokenBudget = Math.max(0, contextTarget - requiredContextTokens);
     const contextStrategy =
       optionalContextTokenBudget === 0 ? "required_context_only" : "bounded_optional_retrieval";
@@ -1149,7 +1155,7 @@ export const make = Effect.gen(function* () {
         requiredTools: prepared.engineInput.assessment.requiredTools,
         requiredModalities: prepared.engineInput.assessment.requiredModalities,
         minimumContextTokens: assessment.estimatedContextTokens,
-        maximumContextTarget: contextTarget,
+        maximumContextTarget: contextTarget > 0 ? contextTarget : null,
         privacyClassification: assessment.privacyClassification,
         localOnly: assessment.privacyClassification === "local_only",
         maximumRetries: result.effectivePolicy.maximumRetries,
@@ -1184,7 +1190,9 @@ export const make = Effect.gen(function* () {
       modelProfileId: decision.selectedModelProfileId,
       summary: decision.selectionExplanation,
     });
-    if (requiredContextTokens >= preferredContextLimit) {
+    // Only a known preferred limit can be exceeded. Without one there is no reduction to report,
+    // and comparing against null would coerce to zero and record one on every run.
+    if (preferredContextLimit !== null && requiredContextTokens >= preferredContextLimit) {
       yield* record({
         eventType: "routing.context_reduction_applied",
         aggregateId: routingDecisionId,
