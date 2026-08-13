@@ -7,13 +7,16 @@ import type { MissionBlocker } from "./MissionBlockers.logic";
 /**
  * What stands between this mission and progress, directly under the header.
  *
- * Each row links to the section that resolves it, so the summary is a route into the page rather
- * than a second place to read the same state. Renders nothing when there is nothing to report.
+ * Each row selects the section that resolves it. These are buttons rather than anchors because the
+ * target usually lives in a tab panel that is not mounted yet, so the workspace has to switch tabs
+ * before it can scroll. Renders nothing when there is nothing to report.
  */
 export function MissionBlockersStrip({
   blockers,
+  onSelect,
 }: {
   readonly blockers: ReadonlyArray<MissionBlocker>;
+  readonly onSelect: (blocker: MissionBlocker) => void;
 }) {
   if (blockers.length === 0) return null;
 
@@ -33,10 +36,11 @@ export function MissionBlockersStrip({
       <ul className="grid gap-1.5">
         {blockers.map((blocker) => (
           <li key={blocker.id}>
-            <a
-              href={`#${blocker.anchor}`}
+            <button
+              type="button"
+              onClick={() => onSelect(blocker)}
               className={cn(
-                "flex min-w-0 items-start gap-2 rounded-md px-1.5 py-1 text-sm outline-none transition-colors",
+                "flex w-full min-w-0 cursor-pointer items-start gap-2 rounded-md px-1.5 py-1 text-left text-sm outline-none transition-colors",
                 "hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring",
                 blocker.severity === "blocker"
                   ? "text-warning-foreground"
@@ -49,7 +53,7 @@ export function MissionBlockersStrip({
                 <InfoIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
               )}
               <span className="min-w-0">{blocker.message}</span>
-            </a>
+            </button>
           </li>
         ))}
       </ul>

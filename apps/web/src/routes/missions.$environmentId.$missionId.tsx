@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
   DeliveryApprovalRequestId,
   DeliveryPolicyId,
@@ -33,6 +33,11 @@ import type {
   ReleasePlanProposalContext,
 } from "../components/delivery/deliveryActions";
 import { scopeDeliverySnapshotToMission } from "../components/delivery";
+import {
+  DEFAULT_MISSION_TAB,
+  isMissionTab,
+  type MissionTab,
+} from "../components/missions/missionTabs";
 import { latestBy } from "../components/delivery/deliveryPresentation";
 import type {
   CreateMissionAgentDraft,
@@ -83,6 +88,8 @@ function failureDescription(failure: Parameters<typeof squashAtomCommandFailure>
 
 function MissionDetailRoute() {
   const { environmentId: environmentIdParam, missionId: missionIdParam } = Route.useParams();
+  const { tab } = Route.useSearch();
+  const navigate = useNavigate();
   const environmentId = EnvironmentId.make(environmentIdParam);
   const missionId = MissionId.make(missionIdParam);
   const { isReady: environmentCatalogReady } = useEnvironments();
@@ -1038,11 +1045,19 @@ function MissionDetailRoute() {
         onAbortIntegration={handleAbortIntegration}
         onRemoveWorktree={handleRemoveWorktree}
         onRequestVerification={handleRequestVerification}
+        activeTab={tab ?? DEFAULT_MISSION_TAB}
+        onTabChange={(next) => {
+          void navigate({ to: ".", search: { tab: next }, replace: true });
+        }}
       />
     </SidebarInset>
   );
 }
 
 export const Route = createFileRoute("/missions/$environmentId/$missionId")({
+  // Absent rather than defaulted, so an unvisited mission keeps a clean URL and only an explicit
+  // tab choice is worth sharing or restoring.
+  validateSearch: (search: Record<string, unknown>): { readonly tab?: MissionTab } =>
+    isMissionTab(search.tab) ? { tab: search.tab } : {},
   component: MissionDetailRoute,
 });

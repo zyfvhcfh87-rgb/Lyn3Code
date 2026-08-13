@@ -1,6 +1,6 @@
 import type { DeliveryWorkspaceSnapshot } from "@t3tools/contracts";
+import type { ReactNode } from "react";
 
-import { SettingsSection } from "../settings/settingsLayout";
 import { DeliveryApprovalsPanel } from "./DeliveryApprovalsPanel";
 import type { DeliveryWorkspaceActions } from "./deliveryActions";
 import { DeliveryDeploymentPanel } from "./DeliveryDeploymentPanel";
@@ -19,6 +19,32 @@ export type DeliveryWorkspaceProps =
       readonly snapshot: DeliveryWorkspaceSnapshot;
       readonly actions?: DeliveryWorkspaceActions | undefined;
     };
+
+/**
+ * A delivery stage inside the mission workspace.
+ *
+ * Previously , which carries settings-page chrome - large headings, page gutters,
+ * and the settings search registry - into a mission. This is the only place the delivery workspace
+ * renders, so it matches the mission's own section rhythm instead.
+ */
+function DeliverySubsection({
+  id,
+  title,
+  children,
+}: {
+  readonly id: string;
+  readonly title: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <section id={id} aria-labelledby={`${id}-heading`} className="grid gap-3">
+      <h3 id={`${id}-heading`} className="text-sm font-semibold">
+        {title}
+      </h3>
+      {children}
+    </section>
+  );
+}
 
 export function deliverySnapshotIsEmpty(snapshot: DeliveryWorkspaceSnapshot): boolean {
   return (
@@ -70,29 +96,29 @@ export function DeliveryWorkspace(props: DeliveryWorkspaceProps) {
 
   return (
     <>
-      <SettingsSection id="delivery-overview" title="Controlled delivery">
+      <DeliverySubsection id="delivery-overview" title="Controlled delivery">
         <DeliveryStageOverview snapshot={snapshot} />
-      </SettingsSection>
+      </DeliverySubsection>
 
-      <SettingsSection id="delivery-readiness" title="Readiness and evidence">
+      <DeliverySubsection id="delivery-readiness" title="Readiness and evidence">
         <DeliveryReadinessPanel snapshot={snapshot} actions={actions} />
-      </SettingsSection>
+      </DeliverySubsection>
 
-      <SettingsSection id="delivery-approvals" title="Approvals">
+      <DeliverySubsection id="delivery-approvals" title="Approvals">
         <DeliveryApprovalsPanel snapshot={snapshot} actions={actions} />
-      </SettingsSection>
+      </DeliverySubsection>
 
-      <SettingsSection id="delivery-release" title="Release planning">
+      <DeliverySubsection id="delivery-release" title="Release planning">
         <DeliveryReleasePlanPanel snapshot={snapshot} actions={actions} />
-      </SettingsSection>
+      </DeliverySubsection>
 
-      <SettingsSection id="delivery-deployment" title="Deployment, validation, and rollback">
+      <DeliverySubsection id="delivery-deployment" title="Deployment, validation, and rollback">
         <DeliveryDeploymentPanel snapshot={snapshot} actions={actions} />
-      </SettingsSection>
+      </DeliverySubsection>
 
-      <SettingsSection id="delivery-history" title="History">
+      <DeliverySubsection id="delivery-history" title="History">
         <DeliveryHistoryPanel snapshot={snapshot} />
-      </SettingsSection>
+      </DeliverySubsection>
     </>
   );
 }
