@@ -180,11 +180,21 @@ export function missionBlockers(input: MissionBlockersInput): ReadonlyArray<Miss
     verificationSummaries.map((summary) => [summary.taskId, summary] as const),
   );
   const liveTasks = tasks.filter((task) => !TERMINAL_TASK_STATUSES.has(task.status));
+  const failedTasks = tasks.filter((task) => task.status === "failed");
+  const retryableTasks = failedTasks.filter((task) => task.attemptCount < task.maximumAttempts);
+  const exhaustedTasks = failedTasks.filter((task) => task.attemptCount >= task.maximumAttempts);
+  // Work that still needs an agent run: anything unfinished, plus a failure that can be retried.
+  // Verification, integration approval, and delivery do not start agents, so a mission whose tasks
+  // are all done has no use for a provider and must not be called blocked for lacking one.
+  const tasksNeedingProvider = [...liveTasks, ...retryableTasks];
 
   const blockers: MissionBlocker[] = [];
   const advisories: MissionBlocker[] = [];
 
-  if (!providerReady && (tasks.length > 0 || agents.length > 0)) {
+  if (
+    !providerReady &&
+    (tasksNeedingProvider.length > 0 || (tasks.length === 0 && agents.length > 0))
+  ) {
     blockers.push({
       id: "provider-unavailable",
       severity: "blocker",
@@ -261,10 +271,6 @@ export function missionBlockers(input: MissionBlockersInput): ReadonlyArray<Miss
   // A failed task leaves `liveTasks`, so without its own branch it disappears from the summary
   // entirely. Nothing retries it either - `task.retry-requested` only ever originates from the user
   // - so a mission with one sits stopped while reporting nothing.
-  const failedTasks = tasks.filter((task) => task.status === "failed");
-  const retryableTasks = failedTasks.filter((task) => task.attemptCount < task.maximumAttempts);
-  const exhaustedTasks = failedTasks.filter((task) => task.attemptCount >= task.maximumAttempts);
-
   if (retryableTasks.length > 0) {
     blockers.push({
       id: "task-failed-retryable",

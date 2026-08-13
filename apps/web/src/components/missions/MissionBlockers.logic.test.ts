@@ -189,6 +189,38 @@ describe("missionBlockers", () => {
     ).toEqual([]);
   });
 
+  // Verification, integration approval, and delivery do not start agent runs, so a finished mission
+  // is not blocked by a provider it no longer needs.
+  it("stops reporting an unavailable provider once no task needs one", () => {
+    expect(
+      ids(missionBlockers(input({ providerReady: false, tasks: [task({ status: "completed" })] }))),
+    ).not.toContain("provider-unavailable");
+
+    expect(
+      ids(
+        missionBlockers(
+          input({
+            providerReady: false,
+            tasks: [task({ status: "failed", attemptCount: 3, maximumAttempts: 3 })],
+          }),
+        ),
+      ),
+    ).not.toContain("provider-unavailable");
+  });
+
+  it("still reports an unavailable provider for a failure that can be retried", () => {
+    expect(
+      ids(
+        missionBlockers(
+          input({
+            providerReady: false,
+            tasks: [task({ status: "failed", attemptCount: 1, maximumAttempts: 3 })],
+          }),
+        ),
+      ),
+    ).toContain("provider-unavailable");
+  });
+
   it("reports an unavailable provider", () => {
     expect(ids(missionBlockers(input({ providerReady: false })))).toContain("provider-unavailable");
   });

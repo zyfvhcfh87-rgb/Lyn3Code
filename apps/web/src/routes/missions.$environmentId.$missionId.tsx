@@ -349,10 +349,15 @@ function MissionDetailRoute() {
               providerInstanceId: draft.providerInstanceId,
               model: draft.model,
               reasoningLevel: existing?.reasoningLevel ?? null,
-              // Sent exactly as chosen. The editor pre-fills a role's defaults, so an empty set
-              // means the user cleared it deliberately; substituting defaults here would grant
-              // capabilities the form did not show, including write access for an implementer.
-              permissions: draft.permissions,
+              // A new slot carries its permissions here, exactly as chosen - the editor pre-fills
+              // a role's defaults, so an empty set means the user cleared it deliberately and
+              // substituting defaults would grant capabilities the form never showed.
+              //
+              // An existing slot keeps its current set, leaving the permission command below as
+              // the sole authority for a change. Sending the new set on both would apply it even
+              // when that command fails, and the next open would find nothing left to record, so
+              // the audit entry could never be recovered.
+              permissions: existing ? existing.permissions : draft.permissions,
               maximumConcurrentRuns: draft.maximumConcurrentRuns,
               status: draft.status,
               createdAt: existing?.createdAt ?? now,
@@ -360,27 +365,30 @@ function MissionDetailRoute() {
             },
           },
         }),
-      existing ? "Agent updated" : "Agent added",
+      // One success message for one save: the permission step reports it when it runs.
+      permissionsChanged ? undefined : existing ? "Agent updated" : "Agent added",
     );
 
-    if (saved && permissionsChanged) {
-      await runAction(
-        `permissions:${missionAgentId}`,
-        "Failed to record the permission change",
-        () =>
-          updateAgentPermissions({
-            environmentId,
-            input: {
-              missionId,
-              missionAgentId,
-              permissions: draft.permissions,
-              updatedAt: new Date().toISOString(),
-            },
-          }),
-      );
-    }
+    if (!saved) return false;
+    if (!permissionsChanged) return true;
 
-    return saved;
+    // Reported as part of the same save, so a failure here keeps the dialog open with the chosen
+    // permissions still pending and retryable.
+    return await runAction(
+      `permissions:${missionAgentId}`,
+      "Failed to update permissions",
+      () =>
+        updateAgentPermissions({
+          environmentId,
+          input: {
+            missionId,
+            missionAgentId,
+            permissions: draft.permissions,
+            updatedAt: new Date().toISOString(),
+          },
+        }),
+      "Agent updated",
+    );
   };
 
   const handleSchedulerAction = async (action: "start" | "pause" | "resume") => {
