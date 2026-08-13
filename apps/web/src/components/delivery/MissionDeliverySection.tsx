@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 import { DefinitionLabel } from "../missions/DefinitionLabel";
 import { DeliveryWorkspace, type DeliveryWorkspaceProps } from "./DeliveryWorkspace";
-import { missionDeliveryIsEmpty } from "./deliveryScope";
+import { deliveryConfigurationIsEmpty, missionDeliveryIsEmpty } from "./deliveryScope";
 import { DeliveryNotice } from "./DeliveryPrimitives";
 
 function DeliverySection({ children }: { readonly children: ReactNode }) {
@@ -35,7 +35,13 @@ export function MissionDeliverySection({
 }) {
   if (!delivery) return null;
 
-  if (delivery.state === "empty") {
+  const unconfigured =
+    delivery.state === "empty" ||
+    (delivery.state === "ready" &&
+      missionDeliveryIsEmpty(delivery.snapshot) &&
+      deliveryConfigurationIsEmpty(delivery.snapshot));
+
+  if (unconfigured) {
     return (
       <DeliverySection>
         <DeliveryNotice title="No controlled delivery configured" tone="neutral" role="status">
@@ -47,19 +53,20 @@ export function MissionDeliverySection({
     );
   }
 
-  if (delivery.state === "ready" && missionDeliveryIsEmpty(delivery.snapshot)) {
-    return (
-      <DeliverySection>
-        <DeliveryNotice title="No delivery activity for this mission" tone="neutral" role="status">
-          Nothing has been assessed, approved, released, or deployed for this mission yet. Delivery
-          begins with a merge-readiness assessment of a verified source revision.
-        </DeliveryNotice>
-      </DeliverySection>
-    );
-  }
+  // A mission with no delivery records of its own still renders the workspace, because that is
+  // where the release and deployment proposal forms live - hiding it behind the notice would leave
+  // a configured project no way to start a mission's first delivery.
+  const missionIdle = delivery.state === "ready" && missionDeliveryIsEmpty(delivery.snapshot);
 
   return (
     <DeliverySection>
+      {missionIdle ? (
+        <DeliveryNotice title="No delivery activity for this mission" tone="neutral" role="status">
+          Nothing has been assessed, approved, released, or deployed for this mission yet. Delivery
+          begins with a merge-readiness assessment of a verified source revision; the
+          project&rsquo;s configured release and deployment targets are available below.
+        </DeliveryNotice>
+      ) : null}
       <div className="space-y-6">
         <DeliveryWorkspace {...delivery} />
       </div>

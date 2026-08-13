@@ -257,6 +257,7 @@ export function missionBlockers(input: MissionBlockersInput): ReadonlyArray<Miss
   }
 
   let conflictedCount = 0;
+  let failedCount = 0;
   let awaitingVerification = 0;
   let awaitingApproval = 0;
   let awaitingPrerequisites = 0;
@@ -270,6 +271,10 @@ export function missionBlockers(input: MissionBlockersInput): ReadonlyArray<Miss
     const verificationAllowed = verificationAuthorized(verificationByTask.get(task.id));
 
     if (conflicted) conflictedCount += 1;
+    // A failed integration needs recovery even when its evidence and prerequisites are in order,
+    // and it can never reach the approvable `ready` state on its own, so it is counted before the
+    // waiting states rather than falling through them unreported.
+    else if (task.integrationStatus === "failed") failedCount += 1;
     else if (!verificationAllowed) awaitingVerification += 1;
     else if (!dependenciesIntegrated) awaitingPrerequisites += 1;
     else if (
@@ -285,6 +290,15 @@ export function missionBlockers(input: MissionBlockersInput): ReadonlyArray<Miss
       id: "integration-conflicted",
       severity: "blocker",
       message: `${pluralize(conflictedCount, "task branch", "task branches")} ${conflictedCount === 1 ? "has" : "have"} merge conflicts that need resolving.`,
+      anchor: MISSION_SECTION_ANCHORS.integration,
+    });
+  }
+
+  if (failedCount > 0) {
+    blockers.push({
+      id: "integration-failed",
+      severity: "blocker",
+      message: `${pluralize(failedCount, "task branch", "task branches")} failed to integrate and ${failedCount === 1 ? "needs" : "need"} recovery before continuing.`,
       anchor: MISSION_SECTION_ANCHORS.integration,
     });
   }

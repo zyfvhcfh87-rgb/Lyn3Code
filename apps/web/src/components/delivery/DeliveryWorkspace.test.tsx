@@ -156,15 +156,32 @@ describe("DeliveryWorkspace", () => {
     expect(html).toContain("delivery policy");
   });
 
-  it("separates an idle mission from an unconfigured project", () => {
+  it("treats a configured project with an idle mission as unconfigured only when it has nothing", () => {
+    const html = renderToStaticMarkup(
+      <MissionDeliverySection delivery={{ state: "ready", snapshot: snapshot() }} />,
+    );
+
+    expect(html).toContain("No controlled delivery configured");
+  });
+
+  // The proposal forms live inside the workspace, so hiding it behind the notice would leave a
+  // configured project no way to start a mission's first release or deployment.
+  it("keeps the workspace available for a mission that has no delivery records yet", () => {
     const html = renderToStaticMarkup(
       <MissionDeliverySection
-        delivery={{ state: "ready", snapshot: snapshot({ policies: [{ id: "policy-1" }] }) }}
+        delivery={{
+          state: "ready",
+          snapshot: snapshot({
+            policies: [{ id: "policy-1" }],
+            releaseConfigurations: [{ id: "release-configuration-1", publicMetadata: {} }],
+          }),
+        }}
       />,
     );
 
     expect(html).toContain("No delivery activity for this mission");
-    expect(html).toContain("merge-readiness assessment");
+    expect(html).toContain("Delivery stages");
+    expect(html).not.toContain("No controlled delivery configured");
   });
 
   it("shows stale source evidence, exact check blockers, freezes, connectivity, and reversibility", () => {

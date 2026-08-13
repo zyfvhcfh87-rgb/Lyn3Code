@@ -79,6 +79,20 @@ export function scopeDeliverySnapshotToMission(
  * Distinct from `deliverySnapshotIsEmpty`, which also counts project-level configuration: a policy
  * configured for the project does not mean this mission has begun delivery.
  */
+/**
+ * Whether the project has anything a mission could act on.
+ *
+ * These collections survive mission scoping and drive the release and deployment proposal forms, so
+ * a mission with no delivery records of its own can still start its first one when they are present.
+ */
+export function deliveryConfigurationIsEmpty(snapshot: DeliveryWorkspaceSnapshot): boolean {
+  return (
+    snapshot.policies.length === 0 &&
+    snapshot.releaseConfigurations.length === 0 &&
+    snapshot.deploymentEnvironments.length === 0
+  );
+}
+
 export function missionDeliveryIsEmpty(snapshot: DeliveryWorkspaceSnapshot): boolean {
   return (
     snapshot.mergeReadinessAssessments.length === 0 &&

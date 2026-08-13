@@ -277,6 +277,33 @@ describe("missionBlockers", () => {
     expect(ids(result)).not.toContain("integration-verification");
   });
 
+  // A failed integration satisfies every waiting condition and can never reach `ready`, so without
+  // its own branch it fell through the chain and the mission read as clear while stuck.
+  it("reports a failed integration even when its evidence and prerequisites are in order", () => {
+    const result = missionBlockers(
+      input({
+        tasks: [task({ integrationStatus: "failed" })],
+        verificationSummaries: [verification()],
+      }),
+    );
+    const failed = result.find((blocker) => blocker.id === "integration-failed");
+
+    expect(failed?.severity).toBe("blocker");
+    expect(failed?.anchor).toBe("mission-integration-heading");
+  });
+
+  it("counts a conflicted integration as a conflict rather than a failure", () => {
+    const result = missionBlockers(
+      input({
+        tasks: [task({ integrationStatus: "conflicted" })],
+        verificationSummaries: [verification()],
+      }),
+    );
+
+    expect(ids(result)).toContain("integration-conflicted");
+    expect(ids(result)).not.toContain("integration-failed");
+  });
+
   it("reports branches held back by missing verification evidence", () => {
     const result = missionBlockers(
       input({
