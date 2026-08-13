@@ -1,5 +1,6 @@
 import type {
   AgentRole,
+  EnvironmentId,
   AgentRun,
   ManagedWorktree,
   Mission,
@@ -48,6 +49,7 @@ function agentBadgeVariant(status: MissionAgent["status"]) {
 }
 
 export function MissionTeamPanel({
+  environmentId,
   mission,
   roles,
   agents,
@@ -62,6 +64,7 @@ export function MissionTeamPanel({
   onRemoveAgent,
   onSchedulerAction,
 }: {
+  readonly environmentId: EnvironmentId;
   readonly mission: Mission;
   readonly roles: ReadonlyArray<AgentRole>;
   readonly agents: ReadonlyArray<MissionAgent>;
@@ -241,6 +244,7 @@ export function MissionTeamPanel({
       )}
 
       <MissionAgentEditor
+        environmentId={environmentId}
         open={editorOpen}
         agent={editorAgent}
         roles={roles}

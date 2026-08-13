@@ -3,11 +3,17 @@ import {
   type AgentPermission,
   type AgentRole,
   type AgentRoleKind,
+  type EnvironmentId,
   type MissionAgent,
   type MissionAgentId,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { useState, type FormEvent } from "react";
+
+import { routingEnvironment } from "../../state/routing";
 
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -53,6 +59,17 @@ export interface MissionAgentProviderChoice {
   readonly label: string;
 }
 
+/** A model this provider offers. `id` is the provider's own slug, which is what an agent stores. */
+export interface MissionAgentModelChoice {
+  readonly id: string;
+  readonly label: string;
+  readonly providerInstanceId: string;
+  readonly unavailable: boolean;
+}
+
+/** Sentinel for "no explicit model", which the contract represents as null. */
+const PROVIDER_DEFAULT_MODEL = "__provider_default__";
+
 function defaultPermissionsFor(
   roleKind: AgentRoleKind,
   roles: ReadonlyArray<AgentRole>,
@@ -68,6 +85,7 @@ function defaultPermissionsFor(
  * including permissions, so a single command can express it.
  */
 export function MissionAgentEditor({
+  environmentId,
   open,
   agent,
   roles,
@@ -76,6 +94,22 @@ export function MissionAgentEditor({
   onOpenChange,
   onSave,
 }: MissionAgentEditorProps) {
+  // The routing registry is the same source the routing panel reads, so the models offered here are
+  // exactly the ones routing can select. Read in the outer component to keep hook order stable
+  // while the inner form mounts and unmounts with the dialog.
+  const registryResult = useAtomValue(
+    routingEnvironment.registryAtom({ environmentId, input: {} }),
+  );
+  const registry = Option.getOrNull(AsyncResult.value(registryResult));
+  const modelChoices: ReadonlyArray<MissionAgentModelChoice> = (registry?.models ?? []).map(
+    (model) => ({
+      id: model.providerModelId,
+      label: model.displayName,
+      providerInstanceId: model.providerProfileId,
+      unavailable: !model.isEnabled || model.status !== "available",
+    }),
+  );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup>
@@ -90,6 +124,7 @@ export function MissionAgentEditor({
             agent={agent}
             roles={roles}
             providerChoices={providerChoices}
+            modelChoices={modelChoices}
             isSubmitting={isSubmitting}
             onOpenChange={onOpenChange}
             onSave={onSave}
@@ -101,6 +136,7 @@ export function MissionAgentEditor({
 }
 
 interface MissionAgentEditorProps {
+  readonly environmentId: EnvironmentId;
   readonly open: boolean;
   /** Null opens the editor for a new slot. */
   readonly agent: MissionAgent | null;
@@ -115,10 +151,13 @@ function MissionAgentEditorForm({
   agent,
   roles,
   providerChoices,
+  modelChoices,
   isSubmitting,
   onOpenChange,
   onSave,
-}: Omit<MissionAgentEditorProps, "open">) {
+}: Omit<MissionAgentEditorProps, "open" | "environmentId"> & {
+  readonly modelChoices: ReadonlyArray<MissionAgentModelChoice>;
+}) {
   const [displayName, setDisplayName] = useState(agent?.displayName ?? "");
   const [roleKind, setRoleKind] = useState<AgentRoleKind>(agent?.roleKind ?? "implementer");
   const [providerInstanceId, setProviderInstanceId] = useState<string>(
@@ -132,6 +171,19 @@ function MissionAgentEditorForm({
   const [permissions, setPermissions] = useState<ReadonlyArray<AgentPermission>>(
     agent?.permissions ?? defaultPermissionsFor("implementer", roles),
   );
+
+  const providerModels = modelChoices.filter(
+    (choice) => choice.providerInstanceId === providerInstanceId,
+  );
+
+  const handleProviderChange = (next: string) => {
+    setProviderInstanceId(next);
+    // A model slug belongs to one provider, so carrying it across would pin a model the new
+    // provider does not offer and routing would reject the run.
+    if (!modelChoices.some((choice) => choice.providerInstanceId === next && choice.id === model)) {
+      setModel("");
+    }
+  };
 
   const trimmedName = displayName.trim();
   const canSubmit =
@@ -209,7 +261,7 @@ function MissionAgentEditorForm({
             <span className="text-sm font-medium">Provider</span>
             <Select
               value={providerInstanceId || null}
-              onValueChange={(value) => setProviderInstanceId(value ?? "")}
+              onValueChange={(value) => handleProviderChange(value ?? "")}
             >
               <SelectTrigger aria-label="Agent provider">
                 <SelectValue placeholder="Choose provider">
@@ -234,11 +286,35 @@ function MissionAgentEditorForm({
           </label>
           <label className="grid gap-1.5">
             <span className="text-sm font-medium">Model</span>
-            <Input
-              value={model}
-              onChange={(event) => setModel(event.currentTarget.value)}
-              placeholder="Provider default"
-            />
+            <Select
+              value={model === "" ? PROVIDER_DEFAULT_MODEL : model}
+              onValueChange={(value) =>
+                setModel(!value || value === PROVIDER_DEFAULT_MODEL ? "" : value)
+              }
+            >
+              <SelectTrigger aria-label="Agent model">
+                <SelectValue>
+                  {model === ""
+                    ? "Provider default"
+                    : (providerModels.find((choice) => choice.id === model)?.label ??
+                      `${model} (unavailable)`)}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value={PROVIDER_DEFAULT_MODEL}>Provider default</SelectItem>
+                {/* Keep a model the slot already holds selectable even if the provider stopped
+                    offering it, so opening the editor cannot silently reset it. */}
+                {model !== "" && !providerModels.some((choice) => choice.id === model) ? (
+                  <SelectItem value={model}>{model} (unavailable)</SelectItem>
+                ) : null}
+                {providerModels.map((choice) => (
+                  <SelectItem key={choice.id} value={choice.id}>
+                    {choice.label}
+                    {choice.unavailable ? " (unavailable)" : ""}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           </label>
           <label className="grid gap-1.5">
             <span className="text-sm font-medium">Concurrent runs</span>

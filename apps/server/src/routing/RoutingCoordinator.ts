@@ -290,8 +290,15 @@ export const make = Effect.gen(function* () {
 
   const uuid = () => crypto.randomUUIDv4.pipe(Effect.orDie);
   const now = () => DateTime.now.pipe(Effect.map(DateTime.formatIso));
+  // The RPC error deliberately carries no storage detail to the client, so log the cause here or it
+  // is lost entirely and "could not be persisted" becomes undiagnosable.
   const persist = <Value, Error>(effect: Effect.Effect<Value, Error>) =>
-    effect.pipe(Effect.mapError(persistenceError));
+    effect.pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("routing workspace persistence failed", { cause }),
+      ),
+      Effect.mapError(persistenceError),
+    );
   const publish = (projectId: string | null) =>
     PubSub.publish(changes, { projectId }).pipe(Effect.asVoid);
 

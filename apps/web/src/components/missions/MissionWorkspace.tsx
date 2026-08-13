@@ -341,6 +341,7 @@ export function MissionWorkspace({
 
             <TabsPanel value="plan" className="grid gap-6">
               <MissionTeamPanel
+                environmentId={environmentId}
                 mission={mission}
                 roles={agentRoles}
                 agents={missionAgents}
