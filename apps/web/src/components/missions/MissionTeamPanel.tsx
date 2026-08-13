@@ -79,8 +79,14 @@ export function MissionTeamPanel({
   readonly onRemoveAgent: (missionAgentId: MissionAgentId) => Promise<void>;
   readonly onSchedulerAction: (action: "start" | "pause" | "resume") => Promise<void>;
 }) {
-  const [editorAgent, setEditorAgent] = useState<MissionAgent | null>(null);
+  const [editorAgentId, setEditorAgentId] = useState<MissionAgentId | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
+  // Resolved on every render rather than captured when the editor opened, so the dialog can see a
+  // slot that another client changed or removed while it was open. Holding the object frozen made
+  // that invisible and let a stale save overwrite the newer one.
+  const editorAgent = editorAgentId
+    ? (agents.find((candidate) => candidate.id === editorAgentId) ?? null)
+    : null;
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const taskById = new Map(tasks.map((task) => [task.id, task] as const));
@@ -104,7 +110,7 @@ export function MissionTeamPanel({
         : "start";
 
   const openEditor = (agent: MissionAgent | null) => {
-    setEditorAgent(agent);
+    setEditorAgentId(agent?.id ?? null);
     setEditorOpen(true);
   };
 
@@ -246,13 +252,14 @@ export function MissionTeamPanel({
       <MissionAgentEditor
         environmentId={environmentId}
         open={editorOpen}
+        agentId={editorAgentId}
         agent={editorAgent}
         roles={roles}
         providerChoices={providerChoices}
         // A permission change runs under its own key after the upsert, so both belong to one save.
         isSubmitting={
-          editorAgent
-            ? isPending(`agent:${editorAgent.id}`) || isPending(`permissions:${editorAgent.id}`)
+          editorAgentId
+            ? isPending(`agent:${editorAgentId}`) || isPending(`permissions:${editorAgentId}`)
             : isPending("agent:add")
         }
         onOpenChange={setEditorOpen}

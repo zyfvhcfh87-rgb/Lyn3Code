@@ -74,6 +74,10 @@ function SettingsForm({ settings, isSubmitting, onOpenChange, onSave }: Omit<Pro
   const [integrationMode, setIntegrationMode] = useState<MissionIntegrationMode>(
     settings.integrationMode,
   );
+  const [conflict, setConflict] = useState(false);
+  // Settings as they stood when this dialog opened. Every field is submitted together, so saving
+  // over a change made elsewhere would revert it silently; the baseline makes that detectable.
+  const [baseline] = useState(settings);
 
   // The server rejects writers exceeding total concurrency, so say so before the request.
   const writersExceedTotal = maximumConcurrentWriteAgents > maximumConcurrentAgents;
@@ -82,6 +86,17 @@ function SettingsForm({ settings, isSubmitting, onOpenChange, onSave }: Omit<Pro
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canSubmit) return;
+    if (
+      baseline.maximumConcurrentAgents !== settings.maximumConcurrentAgents ||
+      baseline.maximumConcurrentWriteAgents !== settings.maximumConcurrentWriteAgents ||
+      baseline.defaultMaximumTaskAttempts !== settings.defaultMaximumTaskAttempts ||
+      baseline.autoStartReadyTasks !== settings.autoStartReadyTasks ||
+      baseline.integrationMode !== settings.integrationMode
+    ) {
+      setConflict(true);
+      return;
+    }
+    setConflict(false);
     const saved = await onSave({
       maximumConcurrentAgents,
       maximumConcurrentWriteAgents,
@@ -176,6 +191,12 @@ function SettingsForm({ settings, isSubmitting, onOpenChange, onSave }: Omit<Pro
           Start ready tasks automatically
         </label>
       </DialogPanel>
+      {conflict ? (
+        <p role="alert" className="px-4 pb-2 text-sm text-destructive-foreground sm:px-6">
+          Team settings changed elsewhere while this dialog was open. Close and reopen to start from
+          the current values.
+        </p>
+      ) : null}
       <DialogFooter>
         <Button
           type="button"

@@ -87,6 +87,7 @@ function defaultPermissionsFor(
 export function MissionAgentEditor({
   environmentId,
   open,
+  agentId,
   agent,
   roles,
   providerChoices,
@@ -120,7 +121,10 @@ export function MissionAgentEditor({
         */}
         {open ? (
           <MissionAgentEditorForm
-            key={agent?.id ?? "new-agent"}
+            // Keyed by identity, not by the record: a concurrent change must not silently remount
+            // the form and discard what the user typed. The conflict is reported at save instead.
+            key={agentId ?? "new-agent"}
+            agentId={agentId}
             agent={agent}
             roles={roles}
             providerChoices={providerChoices}
@@ -138,7 +142,9 @@ export function MissionAgentEditor({
 interface MissionAgentEditorProps {
   readonly environmentId: EnvironmentId;
   readonly open: boolean;
-  /** Null opens the editor for a new slot. */
+  /** The slot being edited. Null opens the editor for a new slot. */
+  readonly agentId: MissionAgentId | null;
+  /** The live record for `agentId`, or null once it no longer exists. */
   readonly agent: MissionAgent | null;
   readonly roles: ReadonlyArray<AgentRole>;
   readonly providerChoices: ReadonlyArray<MissionAgentProviderChoice>;
@@ -148,6 +154,7 @@ interface MissionAgentEditorProps {
 }
 
 function MissionAgentEditorForm({
+  agentId,
   agent,
   roles,
   providerChoices,
@@ -175,6 +182,10 @@ function MissionAgentEditorForm({
   // before the next is set - so a caller-supplied flag goes false between them. This covers the
   // whole await, which is what stops a second submission landing in that gap.
   const [isSaving, setIsSaving] = useState(false);
+  const [conflict, setConflict] = useState<string | null>(null);
+  // The record as it stood when this editor opened. Saving compares against it so a change made
+  // elsewhere is reported rather than overwritten.
+  const [baselineUpdatedAt] = useState(agent?.updatedAt ?? null);
   const submitting = isSaving || isSubmitting;
 
   const providerModels = modelChoices.filter(
@@ -201,16 +212,29 @@ function MissionAgentEditorForm({
   const handleRoleChange = (next: AgentRoleKind) => {
     setRoleKind(next);
     // Adopting a role's defaults is the point of picking one; an existing slot keeps its own.
-    if (agent === null) setPermissions(defaultPermissionsFor(next, roles));
+    if (agentId === null) setPermissions(defaultPermissionsFor(next, roles));
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canSubmit) return;
+    if (agentId !== null && agent === null) {
+      setConflict(
+        "This slot was removed elsewhere. Close the editor and add a new one if you need it.",
+      );
+      return;
+    }
+    if (agentId !== null && agent !== null && agent.updatedAt !== baselineUpdatedAt) {
+      setConflict(
+        "This slot changed elsewhere while you were editing. Close and reopen to start from the current values.",
+      );
+      return;
+    }
+    setConflict(null);
     setIsSaving(true);
     try {
       const saved = await onSave({
-        missionAgentId: agent?.id ?? null,
+        missionAgentId: agentId,
         displayName: trimmedName,
         roleKind,
         providerInstanceId: providerInstanceId as ProviderInstanceId,
@@ -231,7 +255,7 @@ function MissionAgentEditorForm({
   return (
     <form onSubmit={(event) => void handleSubmit(event)}>
       <DialogHeader>
-        <DialogTitle>{agent ? "Edit agent slot" : "Add agent slot"}</DialogTitle>
+        <DialogTitle>{agentId ? "Edit agent slot" : "Add agent slot"}</DialogTitle>
         <DialogDescription>
           A slot decides which provider runs a task, what the agent may do, and how much work it
           takes at once.
@@ -386,6 +410,11 @@ function MissionAgentEditorForm({
           </div>
         </fieldset>
       </DialogPanel>
+      {conflict === null ? null : (
+        <p role="alert" className="px-4 pb-2 text-sm text-destructive-foreground sm:px-6">
+          {conflict}
+        </p>
+      )}
       <DialogFooter>
         <Button
           type="button"
@@ -396,7 +425,7 @@ function MissionAgentEditorForm({
           Cancel
         </Button>
         <Button type="submit" disabled={!canSubmit}>
-          {submitting ? "Saving..." : agent ? "Save agent" : "Add agent"}
+          {submitting ? "Saving..." : agentId ? "Save agent" : "Add agent"}
         </Button>
       </DialogFooter>
     </form>
