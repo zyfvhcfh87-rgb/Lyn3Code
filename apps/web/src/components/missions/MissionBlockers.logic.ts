@@ -180,11 +180,15 @@ export function missionBlockers(input: MissionBlockersInput): ReadonlyArray<Miss
     });
   }
 
+  // Advisory, not a blocker: a mission with no team still runs as a single agent, and
+  // `taskStartBlockedReason` agrees by not requiring an assignment when there are no agents. Adding
+  // slots buys parallelism and isolation, so it is a recommendation rather than an obstacle.
   if (agents.length === 0 && tasks.length > 0) {
-    blockers.push({
+    advisories.push({
       id: "no-agents",
-      severity: "blocker",
-      message: "No agents are configured. Add an agent slot before tasks can be scheduled.",
+      severity: "advisory",
+      message:
+        "This mission has no agent team, so it runs as a single agent. Add agent slots to run tasks in parallel with their own worktrees.",
       anchor: MISSION_SECTION_ANCHORS.team,
     });
   }

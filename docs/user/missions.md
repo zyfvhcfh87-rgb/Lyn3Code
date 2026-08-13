@@ -7,14 +7,52 @@ your ordinary threads.
 ## Open the mission board
 
 Open **Missions** from the sidebar or command palette. The board shows missions for the connected
-environment and can be filtered by project. Open a mission to see its task graph, team, active runs,
-worktrees, handoffs, integration queue, and event history.
+environment and can be filtered by project.
+
+Columns follow the mission lifecycle. A column with no missions in it collapses to a labelled strip
+so the states you are actually using stay on screen together; select a collapsed strip to open it.
+Missions that need attention are counted in the board header, whether or not their column is
+currently in view, and selecting the blocked count brings that column forward. Failed and cancelled
+missions are kept out of the way and shown from the header when you want them.
+
+## Find your way around a mission
+
+A mission opens on five tabs that follow its lifecycle:
+
+- **Plan** — the agent team, routing, and the task dependency graph.
+- **Work** — agent runs and their managed worktrees.
+- **Verify** — verification evidence and the integration queue.
+- **Ship** — controlled delivery.
+- **History** — the mission event timeline.
+
+The tab you are on is part of the address, so reloading or sharing a link returns to the same place.
+
+Above the tabs, a short summary lists anything currently standing between the mission and progress:
+a provider that is not ready, tasks with no agent, paused scheduling, merge conflicts, missing
+verification evidence, and work waiting on your approval. Selecting an entry takes you to the
+section that resolves it. Advisories appear below blockers, and a completed or cancelled mission
+shows nothing here, because its state is history rather than something to act on.
+
+Terms that carry a specific meaning — mission, task, run, worktree, integration, verification,
+delivery, scheduler, and the Verification, Review, and Blocked board columns — carry their
+definition in the interface. Hover or focus the underlined label to read it.
 
 ## Configure the team
 
 A mission can use coordinator, implementer, researcher, reviewer, verifier, or custom agent slots.
 Each slot selects a configured provider and model, has its own concurrency limit, and lists the
 capabilities that a run receives.
+
+An agent slot is edited as a whole: its name, role, provider, model, capacity, availability, and
+permissions are one form with one save. Choosing a role for a new slot fills in that role's default
+permissions, which you can then change. Permissions are saved exactly as shown, so clearing them all
+creates a slot that may do nothing until you grant something back.
+
+Limits that govern the whole team — total agents, write-capable agents, attempts per task,
+automatic starts, and integration mode — live in **Team settings**, separately from any one agent.
+
+A mission does not need a team. With no agent slots configured, **Run without a team** performs the
+whole mission as a single agent. Adding slots is what buys parallel work and isolated worktrees.
 
 The default roles are conservative:
 
@@ -23,9 +61,9 @@ The default roles are conservative:
 - researchers and reviewers are read-only by default;
 - verifiers may inspect files and run tests without editing them by default.
 
-You can change the mission-wide limits for total agents, write-capable agents, attempts per task,
-and automatic starts. New missions default to at most three concurrent agents and two concurrent
-writers. A configured model is required before a task can run.
+New missions default to at most three concurrent agents and two concurrent writers, and write-agent
+concurrency can never exceed total agent concurrency. A configured model is required before a task
+can run.
 
 ## Build the task graph
 

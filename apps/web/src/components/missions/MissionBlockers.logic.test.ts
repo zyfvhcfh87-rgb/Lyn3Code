@@ -192,8 +192,23 @@ describe("missionBlockers", () => {
     expect(ids(missionBlockers(input({ providerReady: false })))).toContain("provider-unavailable");
   });
 
-  it("reports a mission with tasks but no agents", () => {
-    expect(ids(missionBlockers(input({ agents: [] })))).toContain("no-agents");
+  // A team is optional: the workspace offers a direct single-agent run, and
+  // `taskStartBlockedReason` does not require an assignment when no agents exist. Calling this a
+  // blocker would contradict both.
+  it("treats a missing agent team as an advisory, not a blocker", () => {
+    const result = missionBlockers(input({ agents: [] }));
+    const noAgents = result.find((blocker) => blocker.id === "no-agents");
+
+    expect(noAgents?.severity).toBe("advisory");
+    expect(result.filter((blocker) => blocker.severity === "blocker")).toEqual([]);
+  });
+
+  it("does not report an agentless task as unable to start", () => {
+    const result = missionBlockers(
+      input({ agents: [], tasks: [task({ assignedMissionAgentId: null })] }),
+    );
+
+    expect(ids(result).some((id) => id.startsWith("task-start:"))).toBe(false);
   });
 
   it("stays quiet about agents on a mission that has no tasks yet", () => {

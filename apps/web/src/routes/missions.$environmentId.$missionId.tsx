@@ -14,8 +14,6 @@ import {
   ReleasePlanId,
   ReleaseConfigurationId,
   RollbackPlanId,
-  type AgentPermission,
-  type AgentRoleKind,
   type ManagedWorktree,
   type ManagedWorktreeId,
   type MissionAgentId,
@@ -59,22 +57,6 @@ import { routingEnvironment } from "../state/routing";
 import { verificationEnvironment } from "../state/verification";
 import { useAtomCommand } from "../state/use-atom-command";
 import { DEFAULT_RUNTIME_MODE } from "../types";
-
-const FALLBACK_PERMISSIONS = {
-  coordinator: ["read_files", "search_repository", "run_safe_commands", "manage_tasks"],
-  implementer: [
-    "read_files",
-    "search_repository",
-    "run_safe_commands",
-    "run_tests",
-    "write_files",
-    "create_commits",
-  ],
-  researcher: ["read_files", "search_repository", "run_safe_commands"],
-  reviewer: ["read_files", "search_repository", "run_safe_commands", "run_tests"],
-  verifier: ["read_files", "search_repository", "run_safe_commands", "run_tests"],
-  custom: ["read_files"],
-} satisfies Readonly<Record<AgentRoleKind, ReadonlyArray<AgentPermission>>>;
 
 function failureDescription(failure: Parameters<typeof squashAtomCommandFailure>[0]): string {
   const error = squashAtomCommandFailure(failure);
@@ -364,10 +346,10 @@ function MissionDetailRoute() {
               providerInstanceId: draft.providerInstanceId,
               model: draft.model,
               reasoningLevel: existing?.reasoningLevel ?? null,
-              permissions:
-                draft.permissions.length > 0
-                  ? draft.permissions
-                  : (role?.defaultPermissions ?? FALLBACK_PERMISSIONS[draft.roleKind]),
+              // Sent exactly as chosen. The editor pre-fills a role's defaults, so an empty set
+              // means the user cleared it deliberately; substituting defaults here would grant
+              // capabilities the form did not show, including write access for an implementer.
+              permissions: draft.permissions,
               maximumConcurrentRuns: draft.maximumConcurrentRuns,
               status: draft.status,
               createdAt: existing?.createdAt ?? now,
