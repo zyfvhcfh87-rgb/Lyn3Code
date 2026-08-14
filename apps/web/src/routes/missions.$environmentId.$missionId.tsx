@@ -40,7 +40,10 @@ import {
   type MissionTab,
 } from "../components/missions/missionTabs";
 import { latestBy } from "../components/delivery/deliveryPresentation";
-import type { MissionAgentDraft } from "../components/missions/MissionTeamPanel";
+import {
+  missionAgentSavePlan,
+  type MissionAgentDraft,
+} from "../components/missions/MissionAgentEditor.logic";
 import { MissionWorkspace } from "../components/missions/MissionWorkspace";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Button } from "../components/ui/button";
@@ -318,6 +321,8 @@ function MissionDetailRoute() {
    * expresses the edit. A permission change additionally dispatches
    * `mission.agent.permissions.update`, because collapsing it into the upsert would drop the
    * distinct `mission.agent-permissions-updated` entry from mission history.
+   *
+   * `missionAgentSavePlan` decides which of the two run and what each carries.
    */
   const handleSaveAgent = async (draft: MissionAgentDraft) => {
     if (!snapshot) return false;
@@ -326,10 +331,8 @@ function MissionDetailRoute() {
     const existing = draft.missionAgentId
       ? (snapshot.missionAgents.find((candidate) => candidate.id === draft.missionAgentId) ?? null)
       : null;
-    // The draft names a slot that is no longer in the snapshot, so it was removed elsewhere while
-    // this editor was open. Minting a new id would silently resurrect it under a different
-    // identity, detaching it from its own history; report the conflict instead.
-    if (draft.missionAgentId !== null && existing === null) {
+    const plan = missionAgentSavePlan({ draft, existing });
+    if (plan.kind === "conflict") {
       toastManager.add({
         type: "error",
         title: "This agent slot no longer exists",
@@ -338,11 +341,8 @@ function MissionDetailRoute() {
       });
       return false;
     }
-    const missionAgentId = existing?.id ?? newMissionAgentId();
-    const permissionsChanged =
-      existing !== null &&
-      (existing.permissions.length !== draft.permissions.length ||
-        existing.permissions.some((permission) => !draft.permissions.includes(permission)));
+    const missionAgentId = plan.kind === "update" ? plan.missionAgentId : newMissionAgentId();
+    const permissionsChanged = plan.kind === "update" && plan.permissionsChanged;
 
     const saved = await runAction(
       existing ? `agent:${existing.id}` : "agent:add",
@@ -361,15 +361,7 @@ function MissionDetailRoute() {
               providerInstanceId: draft.providerInstanceId,
               model: draft.model,
               reasoningLevel: existing?.reasoningLevel ?? null,
-              // A new slot carries its permissions here, exactly as chosen - the editor pre-fills
-              // a role's defaults, so an empty set means the user cleared it deliberately and
-              // substituting defaults would grant capabilities the form never showed.
-              //
-              // An existing slot keeps its current set, leaving the permission command below as
-              // the sole authority for a change. Sending the new set on both would apply it even
-              // when that command fails, and the next open would find nothing left to record, so
-              // the audit entry could never be recovered.
-              permissions: existing ? existing.permissions : draft.permissions,
+              permissions: plan.permissions,
               maximumConcurrentRuns: draft.maximumConcurrentRuns,
               status: draft.status,
               createdAt: existing?.createdAt ?? now,

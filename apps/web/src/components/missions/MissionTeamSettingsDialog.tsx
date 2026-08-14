@@ -14,6 +14,10 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import {
+  missionTeamSettingsChangedElsewhere,
+  writersExceedTotalAgents,
+} from "./MissionTeamSettingsDialog.logic";
 import { MISSION_INTEGRATION_MODE_LABELS } from "./missionLabels";
 
 const INTEGRATION_MODES = [
@@ -79,20 +83,16 @@ function SettingsForm({ settings, isSubmitting, onOpenChange, onSave }: Omit<Pro
   // over a change made elsewhere would revert it silently; the baseline makes that detectable.
   const [baseline] = useState(settings);
 
-  // The server rejects writers exceeding total concurrency, so say so before the request.
-  const writersExceedTotal = maximumConcurrentWriteAgents > maximumConcurrentAgents;
+  const writersExceedTotal = writersExceedTotalAgents({
+    maximumConcurrentAgents,
+    maximumConcurrentWriteAgents,
+  });
   const canSubmit = !writersExceedTotal && !isSubmitting;
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canSubmit) return;
-    if (
-      baseline.maximumConcurrentAgents !== settings.maximumConcurrentAgents ||
-      baseline.maximumConcurrentWriteAgents !== settings.maximumConcurrentWriteAgents ||
-      baseline.defaultMaximumTaskAttempts !== settings.defaultMaximumTaskAttempts ||
-      baseline.autoStartReadyTasks !== settings.autoStartReadyTasks ||
-      baseline.integrationMode !== settings.integrationMode
-    ) {
+    if (missionTeamSettingsChangedElsewhere(baseline, settings)) {
       setConflict(true);
       return;
     }

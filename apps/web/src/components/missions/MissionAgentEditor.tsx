@@ -6,7 +6,6 @@ import {
   type EnvironmentId,
   type MissionAgent,
   type MissionAgentId,
-  type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
@@ -28,7 +27,28 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import {
+  canSubmitMissionAgentDraft,
+  missionAgentDraftFrom,
+  missionAgentEditConflict,
+  missionAgentEditorInitialState,
+  modelAfterProviderChange,
+  modelChoicesForProvider,
+  permissionsAfterRoleChange,
+  togglePermission,
+  MISSION_AGENT_EDIT_CONFLICT_MESSAGES,
+  PROVIDER_DEFAULT_MODEL,
+  type MissionAgentDraft,
+  type MissionAgentModelChoice,
+  type MissionAgentProviderChoice,
+} from "./MissionAgentEditor.logic";
 import { AGENT_ROLE_KIND_LABELS, MISSION_AGENT_STATUS_LABELS } from "./missionLabels";
+
+export type {
+  MissionAgentDraft,
+  MissionAgentModelChoice,
+  MissionAgentProviderChoice,
+} from "./MissionAgentEditor.logic";
 
 const ROLE_KINDS = [
   "coordinator",
@@ -41,41 +61,6 @@ const ROLE_KINDS = [
 
 /** Availability a person can choose. `running` is owned by the scheduler, not the editor. */
 const SELECTABLE_STATUSES = ["idle", "disabled", "unavailable"] as const;
-
-export interface MissionAgentDraft {
-  /** Null when adding a slot. */
-  readonly missionAgentId: MissionAgentId | null;
-  readonly displayName: string;
-  readonly roleKind: AgentRoleKind;
-  readonly providerInstanceId: ProviderInstanceId;
-  readonly model: string | null;
-  readonly maximumConcurrentRuns: number;
-  readonly status: MissionAgent["status"];
-  readonly permissions: ReadonlyArray<AgentPermission>;
-}
-
-export interface MissionAgentProviderChoice {
-  readonly id: ProviderInstanceId;
-  readonly label: string;
-}
-
-/** A model this provider offers. `id` is the provider's own slug, which is what an agent stores. */
-export interface MissionAgentModelChoice {
-  readonly id: string;
-  readonly label: string;
-  readonly providerInstanceId: string;
-  readonly unavailable: boolean;
-}
-
-/** Sentinel for "no explicit model", which the contract represents as null. */
-const PROVIDER_DEFAULT_MODEL = "__provider_default__";
-
-function defaultPermissionsFor(
-  roleKind: AgentRoleKind,
-  roles: ReadonlyArray<AgentRole>,
-): ReadonlyArray<AgentPermission> {
-  return roles.find((role) => role.kind === roleKind)?.defaultPermissions ?? ["read_files"];
-}
 
 /**
  * One dialog for an agent slot, replacing three independent forms with three save buttons.
@@ -165,84 +150,75 @@ function MissionAgentEditorForm({
 }: Omit<MissionAgentEditorProps, "open" | "environmentId"> & {
   readonly modelChoices: ReadonlyArray<MissionAgentModelChoice>;
 }) {
-  const [displayName, setDisplayName] = useState(agent?.displayName ?? "");
-  const [roleKind, setRoleKind] = useState<AgentRoleKind>(agent?.roleKind ?? "implementer");
-  const [providerInstanceId, setProviderInstanceId] = useState<string>(
-    agent?.providerInstanceId ?? providerChoices[0]?.id ?? "",
+  // Captured once. The record as it stood when this editor opened is also the baseline a save
+  // compares against, so a change made elsewhere is reported rather than overwritten.
+  const [initial] = useState(() =>
+    missionAgentEditorInitialState({ agent, roles, providerChoices }),
   );
-  const [model, setModel] = useState(agent?.model ?? "");
-  const [maximumConcurrentRuns, setMaximumConcurrentRuns] = useState(
-    agent?.maximumConcurrentRuns ?? 1,
-  );
-  const [status, setStatus] = useState<MissionAgent["status"]>(agent?.status ?? "idle");
+  const [displayName, setDisplayName] = useState(initial.displayName);
+  const [roleKind, setRoleKind] = useState<AgentRoleKind>(initial.roleKind);
+  const [providerInstanceId, setProviderInstanceId] = useState<string>(initial.providerInstanceId);
+  const [model, setModel] = useState(initial.model);
+  const [maximumConcurrentRuns, setMaximumConcurrentRuns] = useState(initial.maximumConcurrentRuns);
+  const [status, setStatus] = useState<MissionAgent["status"]>(initial.status);
   const [permissions, setPermissions] = useState<ReadonlyArray<AgentPermission>>(
-    agent?.permissions ?? defaultPermissionsFor("implementer", roles),
+    initial.permissions,
   );
   // A permission change saves as two sequential commands, and the route clears each pending key
   // before the next is set - so a caller-supplied flag goes false between them. This covers the
   // whole await, which is what stops a second submission landing in that gap.
   const [isSaving, setIsSaving] = useState(false);
   const [conflict, setConflict] = useState<string | null>(null);
-  // The record as it stood when this editor opened. Saving compares against it so a change made
-  // elsewhere is reported rather than overwritten.
-  const [baselineUpdatedAt] = useState(agent?.updatedAt ?? null);
   const submitting = isSaving || isSubmitting;
 
-  const providerModels = modelChoices.filter(
-    (choice) => choice.providerInstanceId === providerInstanceId,
-  );
+  const providerModels = modelChoicesForProvider(modelChoices, providerInstanceId);
 
   const handleProviderChange = (next: string) => {
     setProviderInstanceId(next);
-    // A model slug belongs to one provider, so carrying it across would pin a model the new
-    // provider does not offer and routing would reject the run.
-    if (!modelChoices.some((choice) => choice.providerInstanceId === next && choice.id === model)) {
-      setModel("");
-    }
+    setModel((current) => modelAfterProviderChange(modelChoices, next, current));
   };
 
-  const trimmedName = displayName.trim();
-  const canSubmit =
-    trimmedName.length > 0 &&
-    providerInstanceId.length > 0 &&
-    Number.isInteger(maximumConcurrentRuns) &&
-    maximumConcurrentRuns >= 1 &&
-    !submitting;
+  const canSubmit = canSubmitMissionAgentDraft({
+    displayName,
+    providerInstanceId,
+    maximumConcurrentRuns,
+    submitting,
+  });
 
   const handleRoleChange = (next: AgentRoleKind) => {
     setRoleKind(next);
-    // Adopting a role's defaults is the point of picking one; an existing slot keeps its own.
-    if (agentId === null) setPermissions(defaultPermissionsFor(next, roles));
+    setPermissions((current) =>
+      permissionsAfterRoleChange({ agentId, roleKind: next, roles, current }),
+    );
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canSubmit) return;
-    if (agentId !== null && agent === null) {
-      setConflict(
-        "This slot was removed elsewhere. Close the editor and add a new one if you need it.",
-      );
-      return;
-    }
-    if (agentId !== null && agent !== null && agent.updatedAt !== baselineUpdatedAt) {
-      setConflict(
-        "This slot changed elsewhere while you were editing. Close and reopen to start from the current values.",
-      );
+    const editConflict = missionAgentEditConflict({
+      agentId,
+      agent,
+      baselineUpdatedAt: initial.baselineUpdatedAt,
+    });
+    if (editConflict !== null) {
+      setConflict(MISSION_AGENT_EDIT_CONFLICT_MESSAGES[editConflict]);
       return;
     }
     setConflict(null);
     setIsSaving(true);
     try {
-      const saved = await onSave({
-        missionAgentId: agentId,
-        displayName: trimmedName,
-        roleKind,
-        providerInstanceId: providerInstanceId as ProviderInstanceId,
-        model: model.trim() || null,
-        maximumConcurrentRuns,
-        status,
-        permissions,
-      });
+      const saved = await onSave(
+        missionAgentDraftFrom({
+          agentId,
+          displayName,
+          roleKind,
+          providerInstanceId,
+          model,
+          maximumConcurrentRuns,
+          status,
+          permissions,
+        }),
+      );
       if (saved) onOpenChange(false);
     } finally {
       setIsSaving(false);
@@ -397,11 +373,7 @@ function MissionAgentEditorForm({
                 <Checkbox
                   checked={permissions.includes(permission)}
                   onCheckedChange={(checked) =>
-                    setPermissions((current) =>
-                      checked
-                        ? [...current, permission]
-                        : current.filter((value) => value !== permission),
-                    )
+                    setPermissions((current) => togglePermission(current, permission, checked))
                   }
                 />
                 {permission.replaceAll("_", " ")}
