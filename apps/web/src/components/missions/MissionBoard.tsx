@@ -1,17 +1,31 @@
-import { ArchiveIcon, FolderPlusIcon, PlusIcon } from "lucide-react";
+import { ArchiveIcon, CircleAlertIcon, FolderPlusIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { DefinitionLabel } from "./DefinitionLabel";
+import type { MissionGlossaryTerm } from "./missionGlossary";
 import { MissionCard, type MissionCardProps } from "./MissionCard";
 import {
   filterMissionsByProject,
   groupMissionsForBoard,
-  MISSION_BOARD_STATUSES,
+  missionAttentionSummary,
+  missionBoardColumns,
   MISSION_STATUS_LABELS,
+  type MissionBoardStatus,
 } from "./MissionBoard.logic";
 import { CreateMissionDialog, type CreateMissionInput } from "./CreateMissionDialog";
+
+/**
+ * Columns whose meaning is not obvious from the label. The rest read for themselves and are left
+ * plain, so the dotted underline stays a signal rather than decoration.
+ */
+const COLUMN_DEFINITIONS: Partial<Record<MissionBoardStatus, MissionGlossaryTerm>> = {
+  verification: "columnVerification",
+  review: "columnReview",
+  blocked: "columnBlocked",
+};
 
 export interface MissionBoardProject {
   readonly id: string;
@@ -40,12 +54,28 @@ export function MissionBoard({
   readonly onCreateMission: (input: CreateMissionInput) => Promise<boolean>;
 }) {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [expandedStatuses, setExpandedStatuses] = useState<ReadonlySet<MissionBoardStatus>>(
+    () => new Set(),
+  );
+  const [showTerminal, setShowTerminal] = useState(false);
   const projectTitleById = new Map(projects.map((project) => [project.id, project.title] as const));
   const selectedProject =
     (selectedProjectId ? projects.find((project) => project.id === selectedProjectId) : null) ??
     null;
   const filteredMissions = filterMissionsByProject(missions, selectedProjectId);
   const grouped = groupMissionsForBoard(filteredMissions);
+  const columns = missionBoardColumns(grouped, expandedStatuses);
+  const attention = missionAttentionSummary(grouped);
+
+  /** Expand the column if it collapsed, then bring it into view from wherever the board is scrolled. */
+  const revealColumn = (status: MissionBoardStatus) => {
+    setExpandedStatuses((current) => new Set([...current, status]));
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`mission-column-section-${status}`)
+        ?.scrollIntoView({ inline: "center", block: "nearest" });
+    });
+  };
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
@@ -54,6 +84,30 @@ export function MissionBoard({
           <h1 className="text-lg font-semibold">Missions</h1>
           <p className="text-sm text-muted-foreground">Plan, run, and review engineering work.</p>
         </div>
+        {attention.blocked > 0 ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-warning-foreground"
+            onClick={() => revealColumn("blocked")}
+          >
+            <CircleAlertIcon />
+            {attention.blocked} blocked
+          </Button>
+        ) : null}
+        {grouped.terminal.length > 0 ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-muted-foreground"
+            onClick={() => setShowTerminal((current) => !current)}
+          >
+            <ArchiveIcon />
+            {attention.failed > 0
+              ? `${attention.failed} failed`
+              : `${grouped.terminal.length} closed`}
+          </Button>
+        ) : null}
         <Select
           value={selectedProjectId ?? "all"}
           onValueChange={(value) => onSelectedProjectChange(value === "all" ? null : value)}
@@ -100,30 +154,80 @@ export function MissionBoard({
         </div>
       ) : (
         <ScrollArea className="min-h-0 flex-1" scrollbarGutter>
+          {/* Above the horizontal scroller, so it cannot end up parked off-screen right. */}
+          {showTerminal && grouped.terminal.length > 0 ? (
+            <section
+              aria-labelledby="mission-terminal-heading"
+              className="mx-4 mt-4 rounded-xl border border-border/70 bg-card sm:mx-6 sm:mt-6"
+            >
+              <div className="flex items-center gap-2 border-b border-border/70 px-4 py-3">
+                <ArchiveIcon className="size-4 text-muted-foreground" />
+                <h2 id="mission-terminal-heading" className="text-sm font-medium">
+                  Failed and cancelled
+                </h2>
+                <span className="ml-auto text-xs tabular-nums text-muted-foreground">
+                  {grouped.terminal.length}
+                </span>
+                <Button size="sm" variant="ghost" onClick={() => setShowTerminal(false)}>
+                  Hide
+                </Button>
+              </div>
+              <div className="grid gap-2 p-3 sm:grid-cols-2 lg:grid-cols-3">
+                {grouped.terminal.map((mission) => (
+                  <MissionCard
+                    key={mission.missionId}
+                    {...mission}
+                    projectTitle={projectTitleById.get(mission.projectId) ?? "Unknown project"}
+                  />
+                ))}
+              </div>
+            </section>
+          ) : null}
+
           <div className="flex min-w-max gap-3 p-4 sm:p-6">
-            {MISSION_BOARD_STATUSES.map((status) => {
-              const columnMissions = grouped.columns[status];
-              return (
+            {columns.map(({ status, missions, collapsed }) =>
+              collapsed ? (
+                <button
+                  key={status}
+                  type="button"
+                  id={`mission-column-section-${status}`}
+                  aria-label={`Show the ${MISSION_STATUS_LABELS[status]} column`}
+                  className="flex w-11 shrink-0 cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed border-border/70 py-3 text-muted-foreground outline-none transition-colors hover:bg-accent/24 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => setExpandedStatuses((current) => new Set([...current, status]))}
+                >
+                  <span className="text-xs tabular-nums">0</span>
+                  <span className="text-xs font-medium [writing-mode:vertical-rl]">
+                    {MISSION_STATUS_LABELS[status]}
+                  </span>
+                </button>
+              ) : (
                 <section
                   key={status}
+                  id={`mission-column-section-${status}`}
                   className="w-72 shrink-0 rounded-xl border border-border/70 bg-muted/28 p-2.5"
                   aria-labelledby={`mission-column-${status}`}
                 >
                   <header className="mb-2 flex items-center justify-between gap-2 px-1">
                     <h2 id={`mission-column-${status}`} className="text-sm font-semibold">
-                      {MISSION_STATUS_LABELS[status]}
+                      {COLUMN_DEFINITIONS[status] ? (
+                        <DefinitionLabel term={COLUMN_DEFINITIONS[status]}>
+                          {MISSION_STATUS_LABELS[status]}
+                        </DefinitionLabel>
+                      ) : (
+                        MISSION_STATUS_LABELS[status]
+                      )}
                     </h2>
                     <span className="text-xs tabular-nums text-muted-foreground">
-                      {columnMissions.length}
+                      {missions.length}
                     </span>
                   </header>
                   <div className="grid gap-2">
-                    {columnMissions.length === 0 ? (
+                    {missions.length === 0 ? (
                       <p className="rounded-lg border border-dashed border-border/70 px-3 py-6 text-center text-xs text-muted-foreground">
                         No missions
                       </p>
                     ) : (
-                      columnMissions.map((mission) => (
+                      missions.map((mission) => (
                         <MissionCard
                           key={mission.missionId}
                           {...mission}
@@ -135,30 +239,9 @@ export function MissionBoard({
                     )}
                   </div>
                 </section>
-              );
-            })}
+              ),
+            )}
           </div>
-
-          {grouped.terminal.length > 0 ? (
-            <details className="mx-4 mb-6 rounded-xl border border-border/70 bg-card sm:mx-6">
-              <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium">
-                <ArchiveIcon className="size-4 text-muted-foreground" />
-                Failed and cancelled
-                <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-                  {grouped.terminal.length}
-                </span>
-              </summary>
-              <div className="grid gap-2 border-t border-border/70 p-3 sm:grid-cols-2 lg:grid-cols-3">
-                {grouped.terminal.map((mission) => (
-                  <MissionCard
-                    key={mission.missionId}
-                    {...mission}
-                    projectTitle={projectTitleById.get(mission.projectId) ?? "Unknown project"}
-                  />
-                ))}
-              </div>
-            </details>
-          ) : null}
         </ScrollArea>
       )}
 

@@ -703,17 +703,29 @@ const evaluateCandidate = (
     }
   }
 
-  const contextTarget = Math.max(
-    input.assessment.estimatedContextTokens ?? 0,
+  const requiredContextTarget = Math.max(
+    0,
     ...input.rules
       .filter((rule) => policy.matchedRuleIds.includes(rule.id))
       .map((rule) => rule.requirements.maximumContextTarget ?? 0),
+  );
+  const contextTarget = Math.max(
+    input.assessment.estimatedContextTokens ?? 0,
+    requiredContextTarget,
   );
   const maximumContext = candidate.capabilitySnapshot.contextLimits.maximumInputTokens;
   if (input.assessment.estimatedContextTokens === null) {
     reject("task_context_estimate_unknown");
   } else if (maximumContext === null) {
-    reject("context_capacity_unknown");
+    // A provider that declines to report context limits is not the same as a model too small to
+    // hold the work. Unknown capacity still cannot satisfy a rule that explicitly demands a context
+    // target - there is nothing to check it against - but it must not disqualify every model of a
+    // provider whose snapshots omit the field, which would make those providers unroutable
+    // entirely. Where the target is only the assessment's own estimate, the candidate stays
+    // eligible and loses the context-headroom score below.
+    if (requiredContextTarget > 0) {
+      reject(`context_capacity_unknown_for_required_target:${requiredContextTarget}`);
+    }
   } else if (maximumContext < contextTarget) {
     reject(`context_capacity_insufficient:${maximumContext}<${contextTarget}`);
   }

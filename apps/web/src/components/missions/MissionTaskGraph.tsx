@@ -1,5 +1,4 @@
 import {
-  hasWritePermission,
   MissionTaskId,
   type MissionAgent,
   type MissionAgentId,
@@ -13,17 +12,30 @@ import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardPanel } from "../ui/card";
+import { Checkbox } from "../ui/checkbox";
+import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Textarea } from "../ui/textarea";
+import {
+  assignedAgentFor,
+  taskStartBlockedReason,
+  taskWaitingForDependency,
+} from "./MissionBlockers.logic";
+import {
+  AGENT_ROLE_KIND_LABELS,
+  MISSION_TASK_DISPLAY_STATUS_LABELS,
+  type MissionTaskDisplayStatus,
+} from "./missionLabels";
 import { missionDependencyLayers, preflightMissionDependency } from "./MissionTaskGraph.logic";
 
-function taskBadgeVariant(status: string) {
+function taskBadgeVariant(status: MissionTaskDisplayStatus) {
   if (status === "completed") return "success" as const;
   if (status === "integrated") return "success" as const;
   if (status === "failed" || status === "cancelled" || status === "conflicted") {
     return "destructive" as const;
   }
   if (status === "running") return "info" as const;
-  if (status === "blocked" || status === "waiting for dependency") return "warning" as const;
+  if (status === "blocked" || status === "waiting_for_dependency") return "warning" as const;
   return "outline" as const;
 }
 
@@ -127,30 +139,25 @@ export function MissionTaskGraph({
                 const task = taskById.get(taskId);
                 if (!task) return null;
                 const taskDependencies = dependenciesByTask.get(task.id) ?? [];
-                const waitingForDependency = taskDependencies.some(
-                  (dependency) => taskById.get(dependency.dependsOnTaskId)?.status !== "completed",
-                );
-                const assignedAgent = task.assignedMissionAgentId
-                  ? (agents.find((agent) => agent.id === task.assignedMissionAgentId) ?? null)
-                  : null;
-                const startUnavailable =
-                  waitingForDependency ||
-                  (agents.length > 0 && assignedAgent === null) ||
-                  assignedAgent?.status === "disabled" ||
-                  assignedAgent?.status === "unavailable" ||
-                  (assignedAgent !== null &&
-                    hasWritePermission(assignedAgent.permissions) &&
-                    task.worktreeId === null);
-                const displayStatus =
+                const waitingForDependency = taskWaitingForDependency(task, dependencies, taskById);
+                const assignedAgent = assignedAgentFor(task, agents);
+                const startBlockedReason = taskStartBlockedReason({
+                  task,
+                  agents,
+                  assignedAgent,
+                  waitingForDependency,
+                });
+                const startUnavailable = startBlockedReason !== null;
+                const displayStatus: MissionTaskDisplayStatus =
                   task.integrationStatus === "integrated"
                     ? "integrated"
                     : task.integrationStatus === "conflicted"
                       ? "conflicted"
                       : task.integrationStatus !== "not_requested"
-                        ? "integration pending"
+                        ? "integration_pending"
                         : waitingForDependency &&
                             (task.status === "backlog" || task.status === "ready")
-                          ? "waiting for dependency"
+                          ? "waiting_for_dependency"
                           : task.status;
                 const addableTasks = orderedTasks.filter(
                   (candidate) =>
@@ -173,7 +180,9 @@ export function MissionTaskGraph({
                               </p>
                             ) : null}
                           </div>
-                          <Badge variant={taskBadgeVariant(displayStatus)}>{displayStatus}</Badge>
+                          <Badge variant={taskBadgeVariant(displayStatus)}>
+                            {MISSION_TASK_DISPLAY_STATUS_LABELS[displayStatus]}
+                          </Badge>
                         </div>
 
                         {task.blockedReason ? (
@@ -196,30 +205,41 @@ export function MissionTaskGraph({
                         {onAssignTask ? (
                           <label className="grid gap-1 text-xs font-medium">
                             Agent slot
-                            <select
-                              className="h-8 rounded-lg border border-input bg-background px-2 text-sm"
-                              value={task.assignedMissionAgentId ?? ""}
-                              disabled={!canMutate || startUnavailable || isTaskPending(task.id)}
-                              onChange={(event) =>
+                            <Select
+                              value={task.assignedMissionAgentId ?? "unassigned"}
+                              // Gated on the run, not on `startUnavailable`: being unassigned is
+                              // one of the reasons a task cannot start, so gating this control on
+                              // it made an unassigned task impossible to assign.
+                              disabled={
+                                !canMutate || task.status === "running" || isTaskPending(task.id)
+                              }
+                              onValueChange={(value) =>
                                 void onAssignTask(
                                   task.id,
-                                  event.currentTarget.value
-                                    ? (event.currentTarget.value as MissionAgentId)
+                                  value && value !== "unassigned"
+                                    ? (value as MissionAgentId)
                                     : null,
                                 )
                               }
                             >
-                              <option value="">Unassigned</option>
-                              {agents.map((agent) => (
-                                <option
-                                  key={agent.id}
-                                  value={agent.id}
-                                  disabled={agent.status === "disabled"}
-                                >
-                                  {agent.displayName} · {agent.roleKind}
-                                </option>
-                              ))}
-                            </select>
+                              <SelectTrigger aria-label={`Agent slot for ${task.title}`}>
+                                <SelectValue>
+                                  {assignedAgent?.displayName ?? "Unassigned"}
+                                </SelectValue>
+                              </SelectTrigger>
+                              <SelectPopup>
+                                <SelectItem value="unassigned">Unassigned</SelectItem>
+                                {agents.map((agent) => (
+                                  <SelectItem
+                                    key={agent.id}
+                                    value={agent.id}
+                                    disabled={agent.status === "disabled"}
+                                  >
+                                    {agent.displayName} · {AGENT_ROLE_KIND_LABELS[agent.roleKind]}
+                                  </SelectItem>
+                                ))}
+                              </SelectPopup>
+                            </Select>
                           </label>
                         ) : null}
 
@@ -254,37 +274,35 @@ export function MissionTaskGraph({
                             >
                               <label className="grid gap-1 text-xs font-medium">
                                 Title
-                                <input
+                                <Input
+                                  nativeInput
                                   required
                                   name="title"
                                   defaultValue={task.title}
-                                  className="h-8 rounded-lg border border-input bg-background px-2 text-sm"
                                 />
                               </label>
                               <label className="grid gap-1 text-xs font-medium">
                                 Description
-                                <textarea
+                                <Textarea
                                   name="description"
                                   defaultValue={task.description}
                                   rows={3}
-                                  className="resize-y rounded-lg border border-input bg-background p-2 text-sm"
                                 />
                               </label>
                               <label className="grid gap-1 text-xs font-medium">
                                 Maximum attempts
-                                <input
+                                <Input
+                                  nativeInput
                                   required
                                   name="maximumAttempts"
                                   type="number"
                                   min={1}
                                   defaultValue={task.maximumAttempts}
-                                  className="h-8 rounded-lg border border-input bg-background px-2 text-sm"
                                 />
                               </label>
                               <label className="flex items-center gap-2 text-xs font-medium">
-                                <input
+                                <Checkbox
                                   name="requiresDependencyHandoffs"
-                                  type="checkbox"
                                   defaultChecked={task.requiresDependencyHandoffs}
                                 />
                                 Require dependency handoffs
@@ -374,7 +392,12 @@ export function MissionTaskGraph({
                           {(task.status === "ready" || task.status === "backlog") && onStartTask ? (
                             <Button
                               size="sm"
-                              disabled={!canMutate || isTaskPending(task.id)}
+                              disabled={!canMutate || startUnavailable || isTaskPending(task.id)}
+                              title={
+                                startBlockedReason
+                                  ? `Cannot start: ${startBlockedReason}.`
+                                  : undefined
+                              }
                               onClick={() => void onStartTask(task.id)}
                             >
                               <PlayIcon /> Start task

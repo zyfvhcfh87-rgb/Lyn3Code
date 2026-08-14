@@ -13,7 +13,7 @@ These actions are related, but they are not interchangeable:
 
 Completing one action never silently authorizes the next.
 
-Release and deployment plans are proposed from the mission Delivery workspace. You choose the configured policy, release or environment options, and any optional release note context. Lyn Code then derives the plan from the current clean commit, a passing full-profile verification, recorded mission tasks and pull requests, and the selected configuration. The server rejects a proposal when that evidence is missing or stale.
+Release and deployment plans are proposed from a mission's **Ship** tab. Until a project has a delivery policy and a repository-backed release or deployment target, that tab explains what controlled delivery needs rather than staying blank; once configured, a mission with no delivery activity of its own says so instead of showing another mission's. You choose the configured policy, release or environment options, and any optional release note context. Lyn Code then derives the plan from the current clean commit, a passing full-profile verification, recorded mission tasks and pull requests, and the selected configuration. The server rejects a proposal when that evidence is missing or stale.
 
 ## Readiness and evidence
 

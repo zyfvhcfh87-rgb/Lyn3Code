@@ -1,4 +1,5 @@
 import type {
+  EnvironmentId,
   ManagedWorktree,
   Mission,
   MissionTask,
@@ -7,10 +8,21 @@ import type {
   VerificationTaskSummary,
 } from "@t3tools/contracts";
 import { CheckIcon, GitMergeIcon, TriangleAlertIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardPanel } from "../ui/card";
+import { verificationStatusLabel } from "../verification/verificationDisplay";
+import { DefinitionLabel } from "./DefinitionLabel";
+import {
+  canApproveIntegration,
+  integrationConflicted,
+  integrationPrerequisitesIntegrated,
+  verificationAuthorized,
+} from "./MissionBlockers.logic";
+import { MISSION_INTEGRATION_MODE_LABELS, TASK_INTEGRATION_STATUS_LABELS } from "./missionLabels";
+import { MissionSectionLink } from "./MissionSectionLink";
 import { missionDependencyLayers } from "./MissionTaskGraph.logic";
 
 const QUEUED_INTEGRATION_STATUSES = new Set<MissionTask["integrationStatus"]>([
@@ -29,6 +41,7 @@ function integrationBadgeVariant(status: MissionTask["integrationStatus"]) {
 }
 
 export function MissionIntegrationQueue({
+  environmentId,
   mission,
   tasks,
   dependencies,
@@ -39,6 +52,7 @@ export function MissionIntegrationQueue({
   onApprove,
   onAbort,
 }: {
+  readonly environmentId: EnvironmentId;
   readonly mission: Mission;
   readonly tasks: ReadonlyArray<MissionTask>;
   readonly dependencies: ReadonlyArray<TaskDependency>;
@@ -72,12 +86,24 @@ export function MissionIntegrationQueue({
       <div className="flex flex-wrap items-center gap-2">
         <GitMergeIcon className="size-4 text-muted-foreground" />
         <h2 id="mission-integration-heading" className="text-sm font-semibold">
-          Integration queue
+          <DefinitionLabel term="integration">Integration queue</DefinitionLabel>
         </h2>
-        <Badge variant="outline">{mission.teamSettings.integrationMode}</Badge>
+        <Badge variant="outline">
+          {MISSION_INTEGRATION_MODE_LABELS[mission.teamSettings.integrationMode]}
+        </Badge>
         <span className="text-xs tabular-nums text-muted-foreground">
           {queuedTasks.length} waiting
         </span>
+        <MissionSectionLink
+          render={
+            <Link
+              to="/github/$environmentId/$projectId"
+              params={{ environmentId, projectId: mission.projectId }}
+            />
+          }
+        >
+          Branches and pull requests
+        </MissionSectionLink>
       </div>
 
       {queuedTasks.length === 0 ? (
@@ -88,22 +114,20 @@ export function MissionIntegrationQueue({
         <ol className="grid gap-2">
           {queuedTasks.map((task, index) => {
             const worktree = task.worktreeId ? (worktreeById.get(task.worktreeId) ?? null) : null;
-            const prerequisiteTasks = dependencies
-              .filter((dependency) => dependency.taskId === task.id)
-              .map((dependency) => taskById.get(dependency.dependsOnTaskId))
-              .filter((candidate): candidate is MissionTask => candidate !== undefined);
-            const dependenciesIntegrated = prerequisiteTasks.every(
-              (dependency) => dependency.integrationStatus === "integrated",
+            const dependenciesIntegrated = integrationPrerequisitesIntegrated(
+              task,
+              dependencies,
+              taskById,
             );
-            const conflicted =
-              task.integrationStatus === "conflicted" || worktree?.status === "conflicted";
+            const conflicted = integrationConflicted(task, worktree);
             const verification = verificationByTask.get(task.id);
-            const verificationAllowed = verification?.authorization.allowed ?? false;
-            const canApprove =
-              task.integrationStatus === "ready" &&
-              dependenciesIntegrated &&
-              !conflicted &&
-              verificationAllowed;
+            const verificationAllowed = verificationAuthorized(verification);
+            const canApprove = canApproveIntegration({
+              task,
+              dependenciesIntegrated,
+              conflicted,
+              verificationAllowed,
+            });
             return (
               <li key={task.id}>
                 <Card className="[content-visibility:auto] [contain-intrinsic-size:auto_10rem]">
@@ -116,7 +140,7 @@ export function MissionIntegrationQueue({
                         {task.title}
                       </h3>
                       <Badge variant={integrationBadgeVariant(task.integrationStatus)}>
-                        {task.integrationStatus}
+                        {TASK_INTEGRATION_STATUS_LABELS[task.integrationStatus]}
                       </Badge>
                     </div>
 
@@ -149,7 +173,7 @@ export function MissionIntegrationQueue({
                       </dd>
                       <dt className="text-muted-foreground">Verification</dt>
                       <dd className="text-right">
-                        {verification?.authorization.status ?? "missing"}
+                        {verificationStatusLabel(verification?.authorization.status ?? "missing")}
                       </dd>
                     </dl>
 

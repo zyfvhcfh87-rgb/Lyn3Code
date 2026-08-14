@@ -25,6 +25,9 @@ import type { RoutingDecisionDetailView, RoutingDecisionSummaryView } from "../r
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardPanel } from "../ui/card";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { DefinitionLabel } from "./DefinitionLabel";
+import { AGENT_ROLE_KIND_LABELS, AGENT_RUN_STATUS_LABELS } from "./missionLabels";
 import { MissionHandoffViewer } from "./MissionHandoffViewer";
 import { MissionTimeline } from "./MissionTimeline";
 import { missionEventTimelineItems } from "./MissionTimeline.logic";
@@ -252,7 +255,7 @@ export function MissionAgentActivity({
       <div className="flex items-center gap-2">
         <BotIcon className="size-4 text-muted-foreground" />
         <h2 id="mission-runs-heading" className="text-sm font-semibold">
-          Agent activity
+          <DefinitionLabel term="run">Agent activity</DefinitionLabel>
         </h2>
         <span className="text-xs tabular-nums text-muted-foreground">{orderedRuns.length}</span>
       </div>
@@ -283,13 +286,16 @@ export function MissionAgentActivity({
                         {agent?.displayName ?? run.provider}
                       </h3>
                       <p className="truncate text-xs text-muted-foreground">
-                        {agent?.roleKind ?? "legacy agent"} · {task?.title ?? "Mission-wide run"}
+                        {agent ? AGENT_ROLE_KIND_LABELS[agent.roleKind] : "No assigned agent"} ·{" "}
+                        {task?.title ?? "Mission-wide run"}
                       </p>
                     </div>
                     <Badge variant={run.writeCapable ? "warning" : "outline"}>
                       {run.writeCapable ? "write" : "read-only"}
                     </Badge>
-                    <Badge variant={runBadgeVariant(run.status)}>{run.status}</Badge>
+                    <Badge variant={runBadgeVariant(run.status)}>
+                      {AGENT_RUN_STATUS_LABELS[run.status]}
+                    </Badge>
                   </div>
 
                   <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs sm:grid-cols-4">
@@ -324,9 +330,20 @@ export function MissionAgentActivity({
                         {run.modelSelection?.model ?? "Model not recorded"}
                       </span>
                       <Badge variant="outline">{run.reasoningLevel ?? "model default"}</Badge>
-                      <Badge variant={run.routingDecisionId ? "info" : "warning"}>
-                        {run.routingDecisionId ? "Routed" : "Legacy selection"}
-                      </Badge>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Badge variant={run.routingDecisionId ? "info" : "warning"}>
+                              {run.routingDecisionId ? "Routed" : "Direct selection"}
+                            </Badge>
+                          }
+                        />
+                        <TooltipPopup side="top">
+                          {run.routingDecisionId
+                            ? "The routing policy chose this provider and model."
+                            : "This run used its agent's configured provider and model without a routing decision."}
+                        </TooltipPopup>
+                      </Tooltip>
                     </div>
                   ) : null}
 

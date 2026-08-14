@@ -137,19 +137,51 @@ describe("DeliveryWorkspace", () => {
     expect(empty).toContain("No controlled delivery configured");
   });
 
-  it("keeps mission delivery hidden without data and exposes an honest loading fallback", () => {
+  it("hides mission delivery only while the snapshot is absent", () => {
     const absent = renderToStaticMarkup(<MissionDeliverySection />);
-    const empty = renderToStaticMarkup(
-      <MissionDeliverySection delivery={{ state: "ready", snapshot: snapshot() }} />,
-    );
     const loading = renderToStaticMarkup(
       <MissionDeliverySection delivery={{ state: "loading" }} />,
     );
 
     expect(absent).toBe("");
-    expect(empty).toBe("");
     expect(loading).toContain("Delivery");
     expect(loading).toContain("Loading controlled delivery");
+  });
+
+  it("explains controlled delivery instead of vanishing when nothing is configured", () => {
+    const html = renderToStaticMarkup(<MissionDeliverySection delivery={{ state: "empty" }} />);
+
+    expect(html).toContain("Delivery");
+    expect(html).toContain("No controlled delivery configured");
+    expect(html).toContain("delivery policy");
+  });
+
+  it("treats a configured project with an idle mission as unconfigured only when it has nothing", () => {
+    const html = renderToStaticMarkup(
+      <MissionDeliverySection delivery={{ state: "ready", snapshot: snapshot() }} />,
+    );
+
+    expect(html).toContain("No controlled delivery configured");
+  });
+
+  // The proposal forms live inside the workspace, so hiding it behind the notice would leave a
+  // configured project no way to start a mission's first release or deployment.
+  it("keeps the workspace available for a mission that has no delivery records yet", () => {
+    const html = renderToStaticMarkup(
+      <MissionDeliverySection
+        delivery={{
+          state: "ready",
+          snapshot: snapshot({
+            policies: [{ id: "policy-1" }],
+            releaseConfigurations: [{ id: "release-configuration-1", publicMetadata: {} }],
+          }),
+        }}
+      />,
+    );
+
+    expect(html).toContain("No delivery activity for this mission");
+    expect(html).toContain("Delivery stages");
+    expect(html).not.toContain("No controlled delivery configured");
   });
 
   it("shows stale source evidence, exact check blockers, freezes, connectivity, and reversibility", () => {

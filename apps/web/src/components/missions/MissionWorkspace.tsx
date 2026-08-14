@@ -3,7 +3,6 @@ import { Link } from "@tanstack/react-router";
 import {
   isActiveAgentRunStatus,
   type AgentHandoff,
-  type AgentPermission,
   type AgentRole,
   type AgentRun,
   type AgentRunId,
@@ -25,7 +24,10 @@ import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 import {
   ArrowLeftIcon,
-  CircleAlertIcon,
+  BrainIcon,
+  ChartLineIcon,
+  EllipsisIcon,
+  GithubIcon,
   ListChecksIcon,
   OctagonXIcon,
   PlayIcon,
@@ -33,10 +35,21 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
 import { Separator } from "../ui/separator";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Tabs, TabsIndicator, TabsList, TabsPanel, TabsTab } from "../ui/tabs";
+import { DefinitionLabel } from "./DefinitionLabel";
+import { missionBlockers, type MissionBlocker } from "./MissionBlockers.logic";
+import { MissionBlockersStrip } from "./MissionBlockersStrip";
+import {
+  missionTabForAnchor,
+  MISSION_TABS,
+  MISSION_TAB_LABELS,
+  type MissionTab,
+} from "./missionTabs";
 import { MissionDeliverySection, type DeliveryWorkspaceProps } from "../delivery";
 import { CreateTaskDialog, type CreateMissionTaskInput } from "./CreateTaskDialog";
 import { MissionAgentActivity } from "./MissionAgentActivity";
@@ -46,9 +59,8 @@ import { MissionStatusBadge } from "./MissionStatusBadge";
 import { MissionTaskGraph } from "./MissionTaskGraph";
 import {
   MissionTeamPanel,
-  type CreateMissionAgentDraft,
+  type MissionAgentDraft,
   type MissionProviderChoice,
-  type UpdateMissionAgentDraft,
 } from "./MissionTeamPanel";
 import { MissionTimeline } from "./MissionTimeline";
 import { missionEventTimelineItems } from "./MissionTimeline.logic";
@@ -79,10 +91,8 @@ export function MissionWorkspace({
   onStartMission,
   onCancelMission,
   onConfigureTeam,
-  onAddAgent,
-  onUpdateAgent,
+  onSaveAgent,
   onRemoveAgent,
-  onUpdateAgentPermissions,
   onSchedulerAction,
   onAddDependency,
   onRemoveDependency,
@@ -101,6 +111,8 @@ export function MissionWorkspace({
   onRemoveWorktree,
   onRequestVerification,
   delivery,
+  activeTab,
+  onTabChange,
 }: {
   readonly environmentId: EnvironmentId;
   readonly projectTitle: string;
@@ -120,14 +132,9 @@ export function MissionWorkspace({
   readonly onAddTask: (input: CreateMissionTaskInput) => Promise<boolean>;
   readonly onStartMission: () => Promise<void>;
   readonly onCancelMission: () => Promise<void>;
-  readonly onConfigureTeam: (settings: MissionTeamSettings) => Promise<void>;
-  readonly onAddAgent: (draft: CreateMissionAgentDraft) => Promise<void>;
-  readonly onUpdateAgent: (draft: UpdateMissionAgentDraft) => Promise<void>;
+  readonly onConfigureTeam: (settings: MissionTeamSettings) => Promise<boolean>;
+  readonly onSaveAgent: (draft: MissionAgentDraft) => Promise<boolean>;
   readonly onRemoveAgent: (missionAgentId: MissionAgentId) => Promise<void>;
-  readonly onUpdateAgentPermissions: (
-    missionAgentId: MissionAgentId,
-    permissions: ReadonlyArray<AgentPermission>,
-  ) => Promise<void>;
   readonly onSchedulerAction: (action: "start" | "pause" | "resume") => Promise<void>;
   readonly onAddDependency: (
     taskId: MissionTaskId,
@@ -163,6 +170,8 @@ export function MissionWorkspace({
   readonly onRemoveWorktree: (worktreeId: ManagedWorktreeId) => Promise<void>;
   readonly onRequestVerification: (taskId: MissionTaskId) => Promise<void>;
   readonly delivery?: DeliveryWorkspaceProps | undefined;
+  readonly activeTab: MissionTab;
+  readonly onTabChange: (tab: MissionTab) => void;
 }) {
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [openVerificationRunId, setOpenVerificationRunId] = useState<VerificationRunId | null>(
@@ -174,10 +183,45 @@ export function MissionWorkspace({
       input: { projectId: mission.projectId, taskIds: tasks.map((task) => task.id) },
     }),
   );
-  const verificationSummaries: ReadonlyArray<VerificationTaskSummary> =
-    Option.getOrNull(AsyncResult.value(verificationResult)) ?? [];
+  const verificationValue = Option.getOrNull(AsyncResult.value(verificationResult));
+  const verificationSummaries: ReadonlyArray<VerificationTaskSummary> = verificationValue ?? [];
+  // A settled request that returned nothing genuinely means no evidence; an unsettled or failed one
+  // means not yet known, and the two must not read the same in the summary.
+  const verificationEvidenceLoaded = verificationValue !== null;
   const activeRuns = agentRuns.filter((run) => isActiveAgentRunStatus(run.status));
   const canStart = STARTABLE_MISSION_STATUSES.has(mission.status);
+  const tabCounts: Readonly<Record<MissionTab, string | null>> = {
+    plan:
+      tasks.length > 0
+        ? `${tasks.filter((t) => t.status === "completed").length}/${tasks.length}`
+        : null,
+    work: activeRuns.length > 0 ? String(activeRuns.length) : null,
+    verify: null,
+    ship: null,
+    history: events.length > 0 ? String(events.length) : null,
+  };
+
+  /**
+   * Switch to the tab holding the blocker's section, then bring it into view. The panel is not
+   * mounted until its tab is active, so the scroll has to wait for the next frame.
+   */
+  const handleBlockerSelect = (blocker: MissionBlocker) => {
+    onTabChange(missionTabForAnchor(blocker.anchor));
+    requestAnimationFrame(() => {
+      document.getElementById(blocker.anchor)?.scrollIntoView({ block: "start" });
+    });
+  };
+
+  const blockers = missionBlockers({
+    mission,
+    tasks,
+    agents: missionAgents,
+    dependencies: taskDependencies,
+    worktrees: managedWorktrees,
+    verificationSummaries,
+    verificationEvidenceLoaded,
+    providerReady,
+  });
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
@@ -205,12 +249,22 @@ export function MissionWorkspace({
           <PlusIcon /> Add task
         </Button>
         {canStart && missionAgents.length === 0 ? (
-          <Button
-            disabled={!canMutate || !providerReady || isPending("mission:start")}
-            onClick={() => void onStartMission()}
-          >
-            <PlayIcon /> Start legacy run
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  disabled={!canMutate || !providerReady || isPending("mission:start")}
+                  onClick={() => void onStartMission()}
+                >
+                  <PlayIcon /> Run without a team
+                </Button>
+              }
+            />
+            <TooltipPopup side="bottom">
+              Runs the whole mission as a single agent. Add an agent to split the work across roles
+              with their own worktrees.
+            </TooltipPopup>
+          </Tooltip>
         ) : null}
         {activeRuns.length > 0 ? (
           <Button
@@ -221,153 +275,199 @@ export function MissionWorkspace({
             <OctagonXIcon /> Cancel mission ({activeRuns.length})
           </Button>
         ) : null}
+        <Menu>
+          <MenuTrigger
+            render={<Button size="icon" variant="ghost" aria-label="More mission views" />}
+          >
+            <EllipsisIcon />
+          </MenuTrigger>
+          <MenuPopup align="end">
+            <MenuItem
+              render={
+                <Link
+                  to="/memory/$environmentId/$projectId"
+                  params={{ environmentId, projectId: mission.projectId }}
+                />
+              }
+            >
+              <BrainIcon /> Project memory
+            </MenuItem>
+            <MenuItem render={<Link to="/settings/analytics" />}>
+              <ChartLineIcon /> Usage and cost
+            </MenuItem>
+            <MenuItem
+              render={
+                <Link
+                  to="/github/$environmentId/$projectId"
+                  params={{ environmentId, projectId: mission.projectId }}
+                />
+              }
+            >
+              <GithubIcon /> GitHub workspace
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
       </header>
 
       <ScrollArea className="min-h-0 flex-1" scrollbarGutter>
-        <main className="mx-auto grid w-full max-w-[96rem] gap-5 p-4 sm:p-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
-          <div className="grid min-w-0 content-start gap-6">
-            {mission.description ? (
-              <section aria-labelledby="mission-description-heading">
-                <h2 id="mission-description-heading" className="text-sm font-semibold">
-                  Outcome
-                </h2>
-                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
-                  {mission.description}
-                </p>
+        <main className="mx-auto grid w-full max-w-[96rem] content-start gap-5 p-4 sm:p-6">
+          {mission.description ? (
+            <section aria-labelledby="mission-description-heading">
+              <h2 id="mission-description-heading" className="text-sm font-semibold">
+                Outcome
+              </h2>
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
+                {mission.description}
+              </p>
+            </section>
+          ) : null}
+
+          <MissionBlockersStrip blockers={blockers} onSelect={handleBlockerSelect} />
+
+          <Tabs value={activeTab} onValueChange={(value) => onTabChange(value as MissionTab)}>
+            <TabsList>
+              <TabsIndicator />
+              {MISSION_TABS.map((tab) => (
+                <TabsTab key={tab} value={tab}>
+                  {MISSION_TAB_LABELS[tab]}
+                  {tabCounts[tab] ? (
+                    <span className="text-xs tabular-nums text-muted-foreground">
+                      {tabCounts[tab]}
+                    </span>
+                  ) : null}
+                </TabsTab>
+              ))}
+            </TabsList>
+
+            <TabsPanel value="plan" className="grid gap-6">
+              <MissionTeamPanel
+                environmentId={environmentId}
+                mission={mission}
+                roles={agentRoles}
+                agents={missionAgents}
+                tasks={tasks}
+                runs={agentRuns}
+                worktrees={managedWorktrees}
+                providerChoices={providerChoices}
+                canMutate={canMutate}
+                isPending={isPending}
+                onConfigure={onConfigureTeam}
+                onSaveAgent={onSaveAgent}
+                onRemoveAgent={onRemoveAgent}
+                onSchedulerAction={onSchedulerAction}
+              />
+
+              <MissionRoutingWorkspacePanel
+                environmentId={environmentId}
+                mission={mission}
+                tasks={tasks}
+                canMutate={canMutate}
+                onConfigureTeam={onConfigureTeam}
+              />
+
+              <section aria-labelledby="mission-tasks-heading" className="grid gap-3">
+                <div className="flex items-center gap-2">
+                  <ListChecksIcon className="size-4 text-muted-foreground" />
+                  <h2 id="mission-tasks-heading" className="text-sm font-semibold">
+                    <DefinitionLabel term="task">Task dependency graph</DefinitionLabel>
+                  </h2>
+                  <span className="text-xs tabular-nums text-muted-foreground">
+                    {tasks.filter((task) => task.status === "completed").length}/{tasks.length}
+                  </span>
+                </div>
+                <MissionTaskGraph
+                  tasks={tasks}
+                  dependencies={taskDependencies}
+                  agents={missionAgents}
+                  canMutate={canMutate}
+                  isDependencyPending={(taskId, dependsOnTaskId) =>
+                    isPending(`dependency:${taskId}:${dependsOnTaskId}`)
+                  }
+                  isTaskPending={(taskId) => isPending(`task:${taskId}`)}
+                  onAddDependency={onAddDependency}
+                  onRemoveDependency={onRemoveDependency}
+                  onAssignTask={onAssignTask}
+                  onUpdateTask={onUpdateTask}
+                  onStartTask={onStartTask}
+                  onRetryTask={onRetryTask}
+                  onCancelTask={onCancelTask}
+                />
               </section>
-            ) : null}
+            </TabsPanel>
 
-            {!providerReady && (canStart || missionAgents.length > 0) ? (
-              <Alert variant="warning">
-                <CircleAlertIcon />
-                <AlertTitle>No provider is ready</AlertTitle>
-                <AlertDescription>
-                  Configure an available provider before starting mission work.
-                </AlertDescription>
-              </Alert>
-            ) : null}
+            <TabsPanel value="work" className="grid gap-6">
+              <MissionAgentActivity
+                environmentId={environmentId}
+                projectId={mission.projectId}
+                runs={agentRuns}
+                agents={missionAgents}
+                tasks={tasks}
+                worktrees={managedWorktrees}
+                handoffs={agentHandoffs}
+                events={events}
+                canMutate={canMutate}
+                isPending={isPending}
+                onCancel={onCancelRun}
+              />
 
-            <MissionTeamPanel
-              mission={mission}
-              roles={agentRoles}
-              agents={missionAgents}
-              tasks={tasks}
-              runs={agentRuns}
-              worktrees={managedWorktrees}
-              providerChoices={providerChoices}
-              canMutate={canMutate}
-              isPending={isPending}
-              onConfigure={onConfigureTeam}
-              onAddAgent={onAddAgent}
-              onUpdateAgent={onUpdateAgent}
-              onRemoveAgent={onRemoveAgent}
-              onUpdatePermissions={onUpdateAgentPermissions}
-              onSchedulerAction={onSchedulerAction}
-            />
+              <MissionWorktreePanel
+                worktrees={managedWorktrees}
+                tasks={tasks}
+                runs={agentRuns}
+                canMutate={canMutate}
+                isPending={isPending}
+                onOpen={onOpenWorktree}
+                onCopyPath={onCopyWorktreePath}
+                onInspectChanges={onInspectWorktreeChanges}
+                onRequestIntegration={onRequestIntegration}
+                onRemove={onRemoveWorktree}
+              />
+            </TabsPanel>
 
-            <MissionRoutingWorkspacePanel
-              environmentId={environmentId}
-              mission={mission}
-              tasks={tasks}
-              canMutate={canMutate}
-              onConfigureTeam={onConfigureTeam}
-            />
+            <TabsPanel value="verify" className="grid gap-6">
+              <MissionVerificationPanel
+                tasks={tasks}
+                agents={missionAgents}
+                summaries={verificationSummaries}
+                canMutate={canMutate}
+                isPending={isPending}
+                onRequest={onRequestVerification}
+                onOpenRun={setOpenVerificationRunId}
+              />
 
-            <section aria-labelledby="mission-tasks-heading" className="grid gap-3">
-              <div className="flex items-center gap-2">
-                <ListChecksIcon className="size-4 text-muted-foreground" />
-                <h2 id="mission-tasks-heading" className="text-sm font-semibold">
-                  Task dependency graph
-                </h2>
-                <span className="text-xs tabular-nums text-muted-foreground">
-                  {tasks.filter((task) => task.status === "completed").length}/{tasks.length}
-                </span>
-              </div>
-              <MissionTaskGraph
+              <MissionIntegrationQueue
+                environmentId={environmentId}
+                mission={mission}
                 tasks={tasks}
                 dependencies={taskDependencies}
-                agents={missionAgents}
+                verificationSummaries={verificationSummaries}
+                worktrees={managedWorktrees}
                 canMutate={canMutate}
-                isDependencyPending={(taskId, dependsOnTaskId) =>
-                  isPending(`dependency:${taskId}:${dependsOnTaskId}`)
-                }
-                isTaskPending={(taskId) => isPending(`task:${taskId}`)}
-                onAddDependency={onAddDependency}
-                onRemoveDependency={onRemoveDependency}
-                onAssignTask={onAssignTask}
-                onUpdateTask={onUpdateTask}
-                onStartTask={onStartTask}
-                onRetryTask={onRetryTask}
-                onCancelTask={onCancelTask}
+                isPending={isPending}
+                onApprove={onApproveIntegration}
+                onAbort={onAbortIntegration}
               />
-            </section>
+            </TabsPanel>
 
-            <MissionAgentActivity
-              environmentId={environmentId}
-              projectId={mission.projectId}
-              runs={agentRuns}
-              agents={missionAgents}
-              tasks={tasks}
-              worktrees={managedWorktrees}
-              handoffs={agentHandoffs}
-              events={events}
-              canMutate={canMutate}
-              isPending={isPending}
-              onCancel={onCancelRun}
-            />
+            <TabsPanel value="ship">
+              <MissionDeliverySection delivery={delivery} />
+            </TabsPanel>
 
-            <MissionVerificationPanel
-              tasks={tasks}
-              summaries={verificationSummaries}
-              canMutate={canMutate}
-              isPending={isPending}
-              onRequest={onRequestVerification}
-              onOpenRun={setOpenVerificationRunId}
-            />
-
-            <MissionWorktreePanel
-              worktrees={managedWorktrees}
-              tasks={tasks}
-              runs={agentRuns}
-              canMutate={canMutate}
-              isPending={isPending}
-              onOpen={onOpenWorktree}
-              onCopyPath={onCopyWorktreePath}
-              onInspectChanges={onInspectWorktreeChanges}
-              onRequestIntegration={onRequestIntegration}
-              onRemove={onRemoveWorktree}
-            />
-
-            <MissionIntegrationQueue
-              mission={mission}
-              tasks={tasks}
-              dependencies={taskDependencies}
-              verificationSummaries={verificationSummaries}
-              worktrees={managedWorktrees}
-              canMutate={canMutate}
-              isPending={isPending}
-              onApprove={onApproveIntegration}
-              onAbort={onAbortIntegration}
-            />
-
-            <MissionDeliverySection delivery={delivery} />
-          </div>
-
-          <aside
-            className="min-w-0 xl:border-l xl:border-border xl:pl-5"
-            aria-labelledby="mission-activity-heading"
-          >
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <h2 id="mission-activity-heading" className="text-sm font-semibold">
-                Mission activity
-              </h2>
-              <span className="text-xs tabular-nums text-muted-foreground">
-                {events.length} events
-              </span>
-            </div>
-            <Separator className="mb-4" />
-            <MissionTimeline items={missionEventTimelineItems(events)} />
-          </aside>
+            <TabsPanel value="history">
+              <section aria-labelledby="mission-activity-heading" className="grid gap-3">
+                <div className="flex items-center justify-between gap-3">
+                  <h2 id="mission-activity-heading" className="text-sm font-semibold">
+                    Mission activity
+                  </h2>
+                  <span className="text-xs tabular-nums text-muted-foreground">
+                    {events.length} events
+                  </span>
+                </div>
+                <Separator />
+                <MissionTimeline items={missionEventTimelineItems(events)} />
+              </section>
+            </TabsPanel>
+          </Tabs>
         </main>
       </ScrollArea>
 

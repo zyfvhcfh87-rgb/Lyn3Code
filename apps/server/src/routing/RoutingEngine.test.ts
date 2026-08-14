@@ -438,12 +438,53 @@ describe("RoutingEngine", () => {
     );
 
     expect(routed.selected?.candidate.model.id).toBe(healthy.model.id);
-    expect(reasons.get("unknown-context")).toContain("context_capacity_unknown");
+    // Unknown capacity no longer disqualifies on an inferred estimate alone; it loses the
+    // context-headroom score instead, which is why `healthy` still wins here.
+    expect(reasons.get("unknown-context")).toEqual([]);
     expect(reasons.get("stale")).toContain("provider_health_stale");
     expect(reasons.get("limited")).toContain("provider_rate_limited");
     expect(reasons.get("saturated")).toContain("provider_concurrency_exhausted");
     expect(reasons.get("model-saturated")).toContain("model_concurrency_exhausted");
     expect(reasons.get("too-small")).toContain("context_capacity_insufficient:1000<2000");
+  });
+
+  // A provider that omits context limits must stay routable, but "unknown" can never be checked
+  // against a target a rule explicitly demands.
+  it("routes a model with unknown context capacity when only the estimate sets the target", () => {
+    const routed = routeTask(input([candidate("provider", "unknown-context", { context: null })]));
+
+    expect(routed.status).toBe("selected");
+    expect(routed.selected?.candidate.model.providerModelId).toBe("unknown-context");
+    expect(routed.selected?.scoreComponents.context_headroom).toBe(0);
+  });
+
+  it("rejects unknown context capacity against an explicitly required target", () => {
+    const global = policy("global");
+    const contextRule = rule("context", global.id, {
+      requirements: { maximumContextTarget: 100_000 },
+    });
+    const routed = routeTask(
+      input([candidate("provider", "unknown-context", { context: null })], {
+        policies: [global],
+        rules: [contextRule],
+      }),
+    );
+
+    expect(routed.status).toBe("no_eligible_candidate");
+    expect(routed.evaluations[0]?.rejectionReasons).toContain(
+      "context_capacity_unknown_for_required_target:100000",
+    );
+  });
+
+  it("prefers a known-capacity model over one with unknown capacity", () => {
+    const routed = routeTask(
+      input([
+        candidate("provider", "unknown-context", { context: null }),
+        candidate("provider", "known-context", { context: 200_000 }),
+      ]),
+    );
+
+    expect(routed.selected?.candidate.model.providerModelId).toBe("known-context");
   });
 
   it("fails closed when a corrected assessment has no context estimate", () => {

@@ -1,9 +1,11 @@
+import type { AgentRunStatus } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { AlertTriangleIcon, BotIcon, ListChecksIcon } from "lucide-react";
 
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Badge } from "../ui/badge";
 import { Card, CardPanel } from "../ui/card";
+import { AGENT_RUN_STATUS_LABELS } from "./missionLabels";
 import { MissionStatusBadge } from "./MissionStatusBadge";
 import type { MissionPresentationStatus } from "./MissionBoard.logic";
 
@@ -15,7 +17,7 @@ export interface MissionCardProps {
   readonly status: MissionPresentationStatus;
   readonly completedTaskCount: number;
   readonly taskCount: number;
-  readonly activeRunStatus: string | null;
+  readonly activeRunStatus: AgentRunStatus | null;
   readonly updatedAt: string;
   readonly alertSummary: string | null;
 }
@@ -51,7 +53,7 @@ export function MissionCard(props: MissionCardProps) {
           {props.activeRunStatus ? (
             <Badge variant="outline">
               <BotIcon aria-hidden />
-              {props.activeRunStatus}
+              {AGENT_RUN_STATUS_LABELS[props.activeRunStatus]}
             </Badge>
           ) : null}
           <time dateTime={props.updatedAt}>{formatRelativeTimeLabel(props.updatedAt)}</time>

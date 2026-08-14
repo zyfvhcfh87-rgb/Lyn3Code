@@ -1,43 +1,45 @@
-import {
-  ALL_AGENT_PERMISSIONS,
-  type AgentPermission,
-  type AgentRole,
-  type AgentRoleKind,
-  type AgentRun,
-  type ManagedWorktree,
-  type Mission,
-  type MissionAgent,
-  type MissionAgentId,
-  type MissionTask,
-  type MissionTeamSettings,
-  type ProviderInstanceId,
+import type {
+  AgentRole,
+  EnvironmentId,
+  AgentRun,
+  ManagedWorktree,
+  Mission,
+  MissionAgent,
+  MissionAgentId,
+  MissionTask,
+  MissionTeamSettings,
 } from "@t3tools/contracts";
-import { BotIcon, PauseIcon, PlayIcon, PlusIcon, Trash2Icon, UsersIcon } from "lucide-react";
-import type { FormEvent } from "react";
+import {
+  BotIcon,
+  PauseIcon,
+  PencilIcon,
+  PlayIcon,
+  PlusIcon,
+  SlidersHorizontalIcon,
+  Trash2Icon,
+  UsersIcon,
+} from "lucide-react";
+import { useState } from "react";
 
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardPanel } from "../ui/card";
-import { Input } from "../ui/input";
+import { DefinitionLabel } from "./DefinitionLabel";
+import {
+  MissionAgentEditor,
+  type MissionAgentDraft,
+  type MissionAgentProviderChoice,
+} from "./MissionAgentEditor";
+import { MissionTeamSettingsDialog } from "./MissionTeamSettingsDialog";
+import {
+  AGENT_ROLE_KIND_LABELS,
+  MISSION_AGENT_STATUS_LABELS,
+  MISSION_SCHEDULER_STATUS_LABELS,
+} from "./missionLabels";
 
-export interface MissionProviderChoice {
-  readonly id: ProviderInstanceId;
-  readonly label: string;
-}
-
-export interface CreateMissionAgentDraft {
-  readonly displayName: string;
-  readonly roleKind: AgentRoleKind;
-  readonly providerInstanceId: ProviderInstanceId;
-  readonly model: string | null;
-}
-
-export interface UpdateMissionAgentDraft extends CreateMissionAgentDraft {
-  readonly missionAgentId: MissionAgentId;
-  readonly maximumConcurrentRuns: number;
-  readonly status: MissionAgent["status"];
-}
+export type MissionProviderChoice = MissionAgentProviderChoice;
+export type { MissionAgentDraft } from "./MissionAgentEditor";
 
 function agentBadgeVariant(status: MissionAgent["status"]) {
   if (status === "running") return "info" as const;
@@ -46,12 +48,8 @@ function agentBadgeVariant(status: MissionAgent["status"]) {
   return "success" as const;
 }
 
-function positiveInteger(form: FormData, key: string, fallback: number): number {
-  const parsed = Number(form.get(key));
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
-}
-
 export function MissionTeamPanel({
+  environmentId,
   mission,
   roles,
   agents,
@@ -62,12 +60,11 @@ export function MissionTeamPanel({
   canMutate,
   isPending,
   onConfigure,
-  onAddAgent,
-  onUpdateAgent,
+  onSaveAgent,
   onRemoveAgent,
-  onUpdatePermissions,
   onSchedulerAction,
 }: {
+  readonly environmentId: EnvironmentId;
   readonly mission: Mission;
   readonly roles: ReadonlyArray<AgentRole>;
   readonly agents: ReadonlyArray<MissionAgent>;
@@ -77,16 +74,21 @@ export function MissionTeamPanel({
   readonly providerChoices: ReadonlyArray<MissionProviderChoice>;
   readonly canMutate: boolean;
   readonly isPending: (key: string) => boolean;
-  readonly onConfigure: (settings: MissionTeamSettings) => Promise<void>;
-  readonly onAddAgent: (draft: CreateMissionAgentDraft) => Promise<void>;
-  readonly onUpdateAgent: (draft: UpdateMissionAgentDraft) => Promise<void>;
+  readonly onConfigure: (settings: MissionTeamSettings) => Promise<boolean>;
+  readonly onSaveAgent: (draft: MissionAgentDraft) => Promise<boolean>;
   readonly onRemoveAgent: (missionAgentId: MissionAgentId) => Promise<void>;
-  readonly onUpdatePermissions: (
-    missionAgentId: MissionAgentId,
-    permissions: ReadonlyArray<AgentPermission>,
-  ) => Promise<void>;
   readonly onSchedulerAction: (action: "start" | "pause" | "resume") => Promise<void>;
 }) {
+  const [editorAgentId, setEditorAgentId] = useState<MissionAgentId | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  // Resolved on every render rather than captured when the editor opened, so the dialog can see a
+  // slot that another client changed or removed while it was open. Holding the object frozen made
+  // that invisible and let a stale save overwrite the newer one.
+  const editorAgent = editorAgentId
+    ? (agents.find((candidate) => candidate.id === editorAgentId) ?? null)
+    : null;
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
   const taskById = new Map(tasks.map((task) => [task.id, task] as const));
   const worktreeById = new Map(worktrees.map((worktree) => [worktree.id, worktree] as const));
   const activeRunByAgentId = new Map(
@@ -99,62 +101,6 @@ export function MissionTeamPanel({
       .map((run) => [run.missionAgentId!, run] as const),
   );
   const roleNameByKind = new Map(roles.map((role) => [role.kind, role.name] as const));
-  const settings = mission.teamSettings;
-
-  const handleSettingsSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const maximumConcurrentAgents = positiveInteger(
-      form,
-      "maximumConcurrentAgents",
-      settings.maximumConcurrentAgents,
-    );
-    const maximumConcurrentWriteAgents = positiveInteger(
-      form,
-      "maximumConcurrentWriteAgents",
-      settings.maximumConcurrentWriteAgents,
-    );
-    const writeInput = event.currentTarget.elements.namedItem("maximumConcurrentWriteAgents");
-    if (writeInput instanceof HTMLInputElement) {
-      writeInput.setCustomValidity(
-        maximumConcurrentWriteAgents > maximumConcurrentAgents
-          ? "Write-agent concurrency cannot exceed total agent concurrency."
-          : "",
-      );
-      if (!writeInput.reportValidity()) return;
-    }
-    void onConfigure({
-      maximumConcurrentAgents,
-      maximumConcurrentWriteAgents,
-      defaultMaximumTaskAttempts: positiveInteger(
-        form,
-        "defaultMaximumTaskAttempts",
-        settings.defaultMaximumTaskAttempts,
-      ),
-      autoStartReadyTasks: form.get("autoStartReadyTasks") === "on",
-      integrationMode:
-        form.get("integrationMode") === "sequential" ||
-        form.get("integrationMode") === "automatic_when_clean"
-          ? (form.get("integrationMode") as MissionTeamSettings["integrationMode"])
-          : "manual",
-    });
-  };
-
-  const handleAddAgent = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const providerInstanceId = form.get("providerInstanceId");
-    const displayName = String(form.get("displayName") ?? "").trim();
-    const roleKind = String(form.get("roleKind") ?? "implementer") as AgentRoleKind;
-    const model = String(form.get("model") ?? "").trim();
-    if (!displayName || typeof providerInstanceId !== "string" || !providerInstanceId) return;
-    void onAddAgent({
-      displayName,
-      roleKind,
-      providerInstanceId: providerInstanceId as ProviderInstanceId,
-      model: model || null,
-    });
-  };
 
   const schedulerAction =
     mission.schedulerStatus === "running"
@@ -162,6 +108,11 @@ export function MissionTeamPanel({
       : mission.schedulerStatus === "paused"
         ? "resume"
         : "start";
+
+  const openEditor = (agent: MissionAgent | null) => {
+    setEditorAgentId(agent?.id ?? null);
+    setEditorOpen(true);
+  };
 
   return (
     <section aria-labelledby="mission-team-heading" className="grid gap-3">
@@ -171,85 +122,44 @@ export function MissionTeamPanel({
           Agent team
         </h2>
         <Badge variant={mission.schedulerStatus === "running" ? "info" : "outline"}>
-          Scheduler {mission.schedulerStatus}
+          <DefinitionLabel term="scheduler">
+            {MISSION_SCHEDULER_STATUS_LABELS[mission.schedulerStatus]}
+          </DefinitionLabel>
         </Badge>
-        <Button
-          className="ml-auto"
-          size="sm"
-          variant="outline"
-          disabled={!canMutate || isPending("scheduler")}
-          onClick={() => void onSchedulerAction(schedulerAction)}
-        >
-          {schedulerAction === "pause" ? <PauseIcon /> : <PlayIcon />}
-          {schedulerAction === "pause"
-            ? "Pause scheduling"
-            : schedulerAction === "resume"
-              ? "Resume scheduling"
-              : "Start scheduler"}
-        </Button>
-      </div>
-
-      <form
-        key={JSON.stringify(settings)}
-        className="grid gap-3 rounded-xl border border-border/70 bg-muted/20 p-3 sm:grid-cols-2 lg:grid-cols-5"
-        onSubmit={handleSettingsSubmit}
-      >
-        <label className="grid gap-1 text-xs font-medium">
-          Concurrent agents
-          <Input
-            nativeInput
-            name="maximumConcurrentAgents"
-            type="number"
-            min={1}
-            defaultValue={settings.maximumConcurrentAgents}
-          />
-        </label>
-        <label className="grid gap-1 text-xs font-medium">
-          Write agents
-          <Input
-            nativeInput
-            name="maximumConcurrentWriteAgents"
-            type="number"
-            min={1}
-            defaultValue={settings.maximumConcurrentWriteAgents}
-          />
-        </label>
-        <label className="grid gap-1 text-xs font-medium">
-          Task attempts
-          <Input
-            nativeInput
-            name="defaultMaximumTaskAttempts"
-            type="number"
-            min={1}
-            defaultValue={settings.defaultMaximumTaskAttempts}
-          />
-        </label>
-        <label className="grid gap-1 text-xs font-medium">
-          Integration
-          <select
-            name="integrationMode"
-            defaultValue={settings.integrationMode}
-            className="h-8 rounded-lg border border-input bg-background px-2 text-sm"
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!canMutate || isPending("team-settings")}
+            onClick={() => setSettingsOpen(true)}
           >
-            <option value="manual">Manual approval</option>
-            <option value="sequential">Sequential</option>
-            <option value="automatic_when_clean">Automatic when clean</option>
-          </select>
-        </label>
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="flex min-h-8 items-center gap-2 text-xs font-medium">
-            <input
-              name="autoStartReadyTasks"
-              type="checkbox"
-              defaultChecked={settings.autoStartReadyTasks}
-            />
-            Auto-start ready tasks
-          </label>
-          <Button size="sm" type="submit" disabled={!canMutate || isPending("team-settings")}>
-            Save limits
+            <SlidersHorizontalIcon /> Team settings
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!canMutate || isPending("scheduler")}
+            onClick={() => void onSchedulerAction(schedulerAction)}
+          >
+            {schedulerAction === "pause" ? <PauseIcon /> : <PlayIcon />}
+            {schedulerAction === "pause"
+              ? "Pause scheduling"
+              : schedulerAction === "resume"
+                ? "Resume scheduling"
+                : "Start scheduler"}
+          </Button>
+          <Button
+            size="sm"
+            disabled={!canMutate || providerChoices.length === 0}
+            title={
+              providerChoices.length === 0 ? "No provider is ready to run an agent." : undefined
+            }
+            onClick={() => openEditor(null)}
+          >
+            <PlusIcon /> Add agent
           </Button>
         </div>
-      </form>
+      </div>
 
       {agents.length === 0 ? (
         <Card>
@@ -271,24 +181,37 @@ export function MissionTeamPanel({
             return (
               <Card
                 key={agent.id}
-                className="[content-visibility:auto] [contain-intrinsic-size:auto_14rem]"
+                className="[content-visibility:auto] [contain-intrinsic-size:auto_12rem]"
               >
                 <CardPanel className="grid gap-3 p-4">
                   <div className="flex min-w-0 items-start gap-2">
                     <div className="min-w-0 flex-1">
                       <h3 className="truncate text-sm font-semibold">{agent.displayName}</h3>
                       <p className="text-xs text-muted-foreground">
-                        {roleNameByKind.get(agent.roleKind) ?? agent.roleKind} ·{" "}
-                        {agent.providerInstanceId}
+                        {roleNameByKind.get(agent.roleKind) ??
+                          AGENT_ROLE_KIND_LABELS[agent.roleKind]}{" "}
+                        · {agent.providerInstanceId}
                         {agent.model ? ` / ${agent.model}` : ""}
                       </p>
                     </div>
-                    <Badge variant={agentBadgeVariant(agent.status)}>{agent.status}</Badge>
+                    <Badge variant={agentBadgeVariant(agent.status)}>
+                      {MISSION_AGENT_STATUS_LABELS[agent.status]}
+                    </Badge>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label={`Edit ${agent.displayName}`}
+                      disabled={!canMutate || isPending(`agent:${agent.id}`)}
+                      onClick={() => openEditor(agent)}
+                    >
+                      <PencilIcon />
+                    </Button>
                     <Button
                       size="icon-sm"
                       variant="ghost"
                       aria-label={`Remove ${agent.displayName}`}
                       disabled={!canMutate || isPending(`agent:${agent.id}`) || run !== null}
+                      title={run !== null ? "This agent has a run in progress." : undefined}
                       onClick={() => void onRemoveAgent(agent.id)}
                     >
                       <Trash2Icon />
@@ -312,176 +235,13 @@ export function MissionTeamPanel({
                     </dd>
                   </dl>
 
-                  <details>
-                    <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-                      Edit agent slot
-                    </summary>
-                    <form
-                      key={agent.updatedAt}
-                      className="mt-2 grid gap-2 sm:grid-cols-2"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        const form = new FormData(event.currentTarget);
-                        const displayName = String(form.get("displayName") ?? "").trim();
-                        const roleKind = String(form.get("roleKind") ?? "custom") as AgentRoleKind;
-                        const providerInstanceId = String(form.get("providerInstanceId") ?? "");
-                        const maximumConcurrentRuns = Number(form.get("maximumConcurrentRuns"));
-                        const model = String(form.get("model") ?? "").trim();
-                        const status = String(
-                          form.get("status") ?? "idle",
-                        ) as MissionAgent["status"];
-                        if (
-                          !displayName ||
-                          !providerInstanceId ||
-                          !Number.isInteger(maximumConcurrentRuns) ||
-                          maximumConcurrentRuns < 1
-                        ) {
-                          return;
-                        }
-                        void onUpdateAgent({
-                          missionAgentId: agent.id,
-                          displayName,
-                          roleKind,
-                          providerInstanceId: providerInstanceId as ProviderInstanceId,
-                          model: model || null,
-                          maximumConcurrentRuns,
-                          status,
-                        });
-                      }}
-                    >
-                      <label className="grid gap-1 text-xs font-medium">
-                        Display name
-                        <input
-                          required
-                          name="displayName"
-                          defaultValue={agent.displayName}
-                          className="h-8 rounded-lg border border-input bg-background px-2 text-sm"
-                        />
-                      </label>
-                      <label className="grid gap-1 text-xs font-medium">
-                        Role
-                        <select
-                          name="roleKind"
-                          defaultValue={agent.roleKind}
-                          className="h-8 rounded-lg border border-input bg-background px-2 text-sm"
-                        >
-                          {(
-                            [
-                              "coordinator",
-                              "implementer",
-                              "researcher",
-                              "reviewer",
-                              "verifier",
-                              "custom",
-                            ] as const
-                          ).map((kind) => (
-                            <option key={kind} value={kind}>
-                              {roleNameByKind.get(kind) ?? kind}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="grid gap-1 text-xs font-medium">
-                        Provider
-                        <select
-                          required
-                          name="providerInstanceId"
-                          defaultValue={agent.providerInstanceId}
-                          className="h-8 rounded-lg border border-input bg-background px-2 text-sm"
-                        >
-                          {!providerChoices.some(
-                            (provider) => provider.id === agent.providerInstanceId,
-                          ) ? (
-                            <option value={agent.providerInstanceId}>
-                              {agent.providerInstanceId} (unavailable)
-                            </option>
-                          ) : null}
-                          {providerChoices.map((provider) => (
-                            <option key={provider.id} value={provider.id}>
-                              {provider.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="grid gap-1 text-xs font-medium">
-                        Model
-                        <input
-                          name="model"
-                          defaultValue={agent.model ?? ""}
-                          placeholder="Provider default"
-                          className="h-8 rounded-lg border border-input bg-background px-2 text-sm"
-                        />
-                      </label>
-                      <label className="grid gap-1 text-xs font-medium">
-                        Concurrent runs
-                        <input
-                          required
-                          name="maximumConcurrentRuns"
-                          type="number"
-                          min={1}
-                          defaultValue={agent.maximumConcurrentRuns}
-                          className="h-8 rounded-lg border border-input bg-background px-2 text-sm"
-                        />
-                      </label>
-                      <label className="grid gap-1 text-xs font-medium">
-                        Availability
-                        <select
-                          name="status"
-                          defaultValue={agent.status}
-                          className="h-8 rounded-lg border border-input bg-background px-2 text-sm"
-                        >
-                          <option value="idle">Enabled</option>
-                          <option value="disabled">Disabled</option>
-                          <option value="unavailable">Unavailable</option>
-                          {agent.status === "running" ? (
-                            <option value="running">Running</option>
-                          ) : null}
-                        </select>
-                      </label>
-                      <Button
-                        className="sm:col-span-2"
-                        size="sm"
-                        variant="outline"
-                        type="submit"
-                        disabled={!canMutate || isPending(`agent:${agent.id}`)}
-                      >
-                        Save agent
-                      </Button>
-                    </form>
-                  </details>
-
-                  <form
-                    key={agent.permissions.join(":")}
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      const selected = new FormData(event.currentTarget)
-                        .getAll("permission")
-                        .filter((permission): permission is AgentPermission =>
-                          ALL_AGENT_PERMISSIONS.includes(permission as AgentPermission),
-                        );
-                      void onUpdatePermissions(agent.id, selected);
-                    }}
-                  >
-                    <fieldset disabled={!canMutate || isPending(`permissions:${agent.id}`)}>
-                      <legend className="mb-1 text-xs font-medium">Permissions</legend>
-                      <div className="flex flex-wrap gap-x-3 gap-y-1">
-                        {ALL_AGENT_PERMISSIONS.map((permission) => (
-                          <label key={permission} className="flex items-center gap-1.5 text-xs">
-                            <input
-                              name="permission"
-                              value={permission}
-                              type="checkbox"
-                              defaultChecked={agent.permissions.includes(permission)}
-                            />
-                            {permission.replaceAll("_", " ")}
-                          </label>
-                        ))}
-                      </div>
-                      <Button className="mt-2" size="sm" variant="outline" type="submit">
-                        Save permissions
-                      </Button>
-                    </fieldset>
-                  </form>
+                  <div className="flex flex-wrap gap-1">
+                    {agent.permissions.map((permission) => (
+                      <Badge key={permission} variant="outline">
+                        {permission.replaceAll("_", " ")}
+                      </Badge>
+                    ))}
+                  </div>
                 </CardPanel>
               </Card>
             );
@@ -489,66 +249,30 @@ export function MissionTeamPanel({
         </div>
       )}
 
-      <form
-        className="grid gap-2 rounded-xl border border-dashed border-border p-3 sm:grid-cols-2 lg:grid-cols-5"
-        onSubmit={handleAddAgent}
-      >
-        <label className="grid gap-1 text-xs font-medium">
-          Display name
-          <Input nativeInput required name="displayName" placeholder="Implementer 1" />
-        </label>
-        <label className="grid gap-1 text-xs font-medium">
-          Role
-          <select
-            name="roleKind"
-            defaultValue="implementer"
-            className="h-8 rounded-lg border border-input bg-background px-2 text-sm"
-          >
-            {(
-              [
-                "coordinator",
-                "implementer",
-                "researcher",
-                "reviewer",
-                "verifier",
-                "custom",
-              ] as const
-            ).map((kind) => (
-              <option key={kind} value={kind}>
-                {roleNameByKind.get(kind) ?? kind}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="grid gap-1 text-xs font-medium">
-          Provider
-          <select
-            required
-            name="providerInstanceId"
-            className="h-8 rounded-lg border border-input bg-background px-2 text-sm"
-          >
-            <option value="">Choose provider</option>
-            {providerChoices.map((provider) => (
-              <option key={provider.id} value={provider.id}>
-                {provider.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="grid gap-1 text-xs font-medium">
-          Model (optional)
-          <Input nativeInput name="model" placeholder="Provider default" />
-        </label>
-        <div className="flex items-end">
-          <Button
-            size="sm"
-            type="submit"
-            disabled={!canMutate || providerChoices.length === 0 || isPending("agent:add")}
-          >
-            <PlusIcon /> Add agent
-          </Button>
-        </div>
-      </form>
+      <MissionAgentEditor
+        environmentId={environmentId}
+        open={editorOpen}
+        agentId={editorAgentId}
+        agent={editorAgent}
+        roles={roles}
+        providerChoices={providerChoices}
+        // A permission change runs under its own key after the upsert, so both belong to one save.
+        isSubmitting={
+          editorAgentId
+            ? isPending(`agent:${editorAgentId}`) || isPending(`permissions:${editorAgentId}`)
+            : isPending("agent:add")
+        }
+        onOpenChange={setEditorOpen}
+        onSave={onSaveAgent}
+      />
+
+      <MissionTeamSettingsDialog
+        open={settingsOpen}
+        settings={mission.teamSettings}
+        isSubmitting={isPending("team-settings")}
+        onOpenChange={setSettingsOpen}
+        onSave={onConfigure}
+      />
     </section>
   );
 }

@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
   DeliveryApprovalRequestId,
   DeliveryPolicyId,
@@ -14,8 +14,6 @@ import {
   ReleasePlanId,
   ReleaseConfigurationId,
   RollbackPlanId,
-  type AgentPermission,
-  type AgentRoleKind,
   type ManagedWorktree,
   type ManagedWorktreeId,
   type MissionAgentId,
@@ -32,10 +30,20 @@ import type {
   DeploymentPlanProposalContext,
   ReleasePlanProposalContext,
 } from "../components/delivery/deliveryActions";
-import type {
-  CreateMissionAgentDraft,
-  UpdateMissionAgentDraft,
-} from "../components/missions/MissionTeamPanel";
+import {
+  scopeDeliverySnapshotToMission,
+  type DeliveryWorkspaceProps,
+} from "../components/delivery";
+import {
+  DEFAULT_MISSION_TAB,
+  isMissionTab,
+  type MissionTab,
+} from "../components/missions/missionTabs";
+import { latestBy } from "../components/delivery/deliveryPresentation";
+import {
+  missionAgentSavePlan,
+  type MissionAgentDraft,
+} from "../components/missions/MissionAgentEditor.logic";
 import { MissionWorkspace } from "../components/missions/MissionWorkspace";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Button } from "../components/ui/button";
@@ -56,22 +64,6 @@ import { verificationEnvironment } from "../state/verification";
 import { useAtomCommand } from "../state/use-atom-command";
 import { DEFAULT_RUNTIME_MODE } from "../types";
 
-const FALLBACK_PERMISSIONS = {
-  coordinator: ["read_files", "search_repository", "run_safe_commands", "manage_tasks"],
-  implementer: [
-    "read_files",
-    "search_repository",
-    "run_safe_commands",
-    "run_tests",
-    "write_files",
-    "create_commits",
-  ],
-  researcher: ["read_files", "search_repository", "run_safe_commands"],
-  reviewer: ["read_files", "search_repository", "run_safe_commands", "run_tests"],
-  verifier: ["read_files", "search_repository", "run_safe_commands", "run_tests"],
-  custom: ["read_files"],
-} satisfies Readonly<Record<AgentRoleKind, ReadonlyArray<AgentPermission>>>;
-
 function failureDescription(failure: Parameters<typeof squashAtomCommandFailure>[0]): string {
   const error = squashAtomCommandFailure(failure);
   return error instanceof Error && error.message.trim().length > 0
@@ -81,6 +73,8 @@ function failureDescription(failure: Parameters<typeof squashAtomCommandFailure>
 
 function MissionDetailRoute() {
   const { environmentId: environmentIdParam, missionId: missionIdParam } = Route.useParams();
+  const { tab } = Route.useSearch();
+  const navigate = useNavigate();
   const environmentId = EnvironmentId.make(environmentIdParam);
   const missionId = MissionId.make(missionIdParam);
   const { isReady: environmentCatalogReady } = useEnvironments();
@@ -168,7 +162,13 @@ function MissionDetailRoute() {
       input: { projectId: deliveryProjectId },
     }),
   );
-  const deliverySnapshot = Option.getOrNull(AsyncResult.value(deliveryResult));
+  const projectDeliverySnapshot = Option.getOrNull(AsyncResult.value(deliveryResult));
+  // Delivery records are stored per project. Everything the mission workspace renders or acts on
+  // must be narrowed to this mission first, or a sibling mission's release state appears here.
+  const deliverySnapshot =
+    projectDeliverySnapshot === null
+      ? null
+      : scopeDeliverySnapshotToMission(projectDeliverySnapshot, missionId);
   const streamError = Option.getOrNull(detailState.error);
   const project = snapshot
     ? (projects.find(
@@ -289,7 +289,7 @@ function MissionDetailRoute() {
   };
 
   const handleConfigureTeam = async (settings: MissionTeamSettings) => {
-    await runAction(
+    return await runAction(
       "team-settings",
       "Failed to update team settings",
       () =>
@@ -298,39 +298,6 @@ function MissionDetailRoute() {
           input: { missionId, settings, updatedAt: new Date().toISOString() },
         }),
       "Team settings updated",
-    );
-  };
-
-  const handleAddAgent = async (draft: CreateMissionAgentDraft) => {
-    if (!snapshot) return;
-    const now = new Date().toISOString();
-    const role = snapshot.agentRoles.find((candidate) => candidate.kind === draft.roleKind);
-    await runAction(
-      "agent:add",
-      "Failed to add agent",
-      () =>
-        upsertAgent({
-          environmentId,
-          input: {
-            missionId,
-            agent: {
-              id: newMissionAgentId(),
-              missionId,
-              roleId: role?.id ?? null,
-              roleKind: draft.roleKind,
-              displayName: draft.displayName,
-              providerInstanceId: draft.providerInstanceId,
-              model: draft.model,
-              reasoningLevel: null,
-              permissions: role?.defaultPermissions ?? FALLBACK_PERMISSIONS[draft.roleKind],
-              maximumConcurrentRuns: 1,
-              status: "idle",
-              createdAt: now,
-              updatedAt: now,
-            },
-          },
-        }),
-      "Agent added",
     );
   };
 
@@ -347,42 +314,71 @@ function MissionDetailRoute() {
     );
   };
 
-  const handleUpdateAgent = async (draft: UpdateMissionAgentDraft) => {
-    const agent = snapshot?.missionAgents.find(
-      (candidate) => candidate.id === draft.missionAgentId,
-    );
-    if (!agent || !snapshot) return;
+  /**
+   * One save for the whole agent slot.
+   *
+   * `mission.agent.upsert` carries the full record including permissions, so a single command
+   * expresses the edit. A permission change additionally dispatches
+   * `mission.agent.permissions.update`, because collapsing it into the upsert would drop the
+   * distinct `mission.agent-permissions-updated` entry from mission history.
+   *
+   * `missionAgentSavePlan` decides which of the two run and what each carries.
+   */
+  const handleSaveAgent = async (draft: MissionAgentDraft) => {
+    if (!snapshot) return false;
+    const now = new Date().toISOString();
     const role = snapshot.agentRoles.find((candidate) => candidate.kind === draft.roleKind);
-    await runAction(
-      `agent:${agent.id}`,
-      "Failed to update agent",
+    const existing = draft.missionAgentId
+      ? (snapshot.missionAgents.find((candidate) => candidate.id === draft.missionAgentId) ?? null)
+      : null;
+    const plan = missionAgentSavePlan({ draft, existing });
+    if (plan.kind === "conflict") {
+      toastManager.add({
+        type: "error",
+        title: "This agent slot no longer exists",
+        description:
+          "It was removed elsewhere. Close the editor and add a new slot if you need it.",
+      });
+      return false;
+    }
+    const missionAgentId = plan.kind === "update" ? plan.missionAgentId : newMissionAgentId();
+    const permissionsChanged = plan.kind === "update" && plan.permissionsChanged;
+
+    const saved = await runAction(
+      existing ? `agent:${existing.id}` : "agent:add",
+      existing ? "Failed to update agent" : "Failed to add agent",
       () =>
         upsertAgent({
           environmentId,
           input: {
             missionId,
             agent: {
-              ...agent,
+              id: missionAgentId,
+              missionId,
               roleId: role?.id ?? null,
               roleKind: draft.roleKind,
               displayName: draft.displayName,
               providerInstanceId: draft.providerInstanceId,
               model: draft.model,
+              reasoningLevel: existing?.reasoningLevel ?? null,
+              permissions: plan.permissions,
               maximumConcurrentRuns: draft.maximumConcurrentRuns,
               status: draft.status,
-              updatedAt: new Date().toISOString(),
+              createdAt: existing?.createdAt ?? now,
+              updatedAt: now,
             },
           },
         }),
-      "Agent updated",
+      // One success message for one save: the permission step reports it when it runs.
+      permissionsChanged ? undefined : existing ? "Agent updated" : "Agent added",
     );
-  };
 
-  const handleUpdatePermissions = async (
-    missionAgentId: MissionAgentId,
-    permissions: ReadonlyArray<AgentPermission>,
-  ) => {
-    await runAction(
+    if (!saved) return false;
+    if (!permissionsChanged) return true;
+
+    // Reported as part of the same save, so a failure here keeps the dialog open with the chosen
+    // permissions still pending and retryable.
+    return await runAction(
       `permissions:${missionAgentId}`,
       "Failed to update permissions",
       () =>
@@ -391,11 +387,11 @@ function MissionDetailRoute() {
           input: {
             missionId,
             missionAgentId,
-            permissions,
+            permissions: draft.permissions,
             updatedAt: new Date().toISOString(),
           },
         }),
-      "Permissions updated",
+      "Agent updated",
     );
   };
 
@@ -694,14 +690,28 @@ function MissionDetailRoute() {
   };
 
   const handlePublishDeliveryRelease = async (targetId: string) => {
-    if (!deliverySnapshot) return;
+    if (!deliverySnapshot || !projectDeliverySnapshot) return;
     const plan = deliverySnapshot.releasePlans.find((candidate) => candidate.id === targetId);
-    const connection = deliverySnapshot.mergeReadinessAssessments.at(-1)?.repositoryConnectionId;
-    if (!plan || !connection) {
+    if (!plan) {
+      toastManager.add({
+        type: "error",
+        title: "Release plan unavailable",
+        description: "This release plan is no longer part of the mission.",
+      });
+      return;
+    }
+    // A project connects exactly one GitHub repository, so the target is a project-level fact.
+    // Read it from the most recently observed assessment rather than by array position.
+    const connection = latestBy(
+      projectDeliverySnapshot.mergeReadinessAssessments,
+      (assessment) => assessment.observedAt,
+    )?.repositoryConnectionId;
+    if (!connection) {
       toastManager.add({
         type: "error",
         title: "Release repository unavailable",
-        description: "A source-bound GitHub repository assessment is required before publication.",
+        description:
+          "No merge-readiness assessment has recorded a GitHub repository for this project. Assess readiness before publishing.",
       });
       return;
     }
@@ -911,6 +921,47 @@ function MissionDetailRoute() {
     );
   }
 
+  // The Ship tab is a whole panel now, so an absent snapshot has to say why rather than render
+  // nothing: a failed subscription would otherwise leave the tab permanently blank.
+  const deliveryActions = canOperateDelivery
+    ? {
+        onRequestApproval: ({ targetId, reason }: { targetId: string; reason: string }) =>
+          handleRequestDeliveryApproval(targetId, reason),
+        onDecideApproval: ({
+          targetId,
+          decision,
+          reason,
+        }: {
+          targetId: string;
+          decision: "approve" | "reject";
+          reason: string;
+        }) => handleDecideDeliveryApproval(targetId, decision, reason),
+        onExecuteMerge: ({ targetId }: { targetId: string }) =>
+          handleExecuteDeliveryMerge(targetId),
+        onCreateReleasePlan: handleProposeDeliveryRelease,
+        onExecuteRelease: ({ targetId }: { targetId: string }) =>
+          handlePublishDeliveryRelease(targetId),
+        onCreateDeploymentPlan: handleProposeDeliveryDeployment,
+        onExecuteDeployment: ({ targetId }: { targetId: string }) =>
+          handleExecuteDeliveryDeployment(targetId),
+        onCancelDeployment: ({ targetId, reason }: { targetId: string; reason: string }) =>
+          handleCancelDeliveryDeployment(targetId, reason),
+        onExecuteRollback: ({ targetId }: { targetId: string }) =>
+          handleExecuteDeliveryRollback(targetId),
+      }
+    : undefined;
+  const deliveryProps: DeliveryWorkspaceProps =
+    deliveryResult._tag === "Failure"
+      ? {
+          state: "error",
+          error: "The delivery subscription for this project could not be loaded.",
+        }
+      : deliverySnapshot === null || deliverySnapshot.projectId !== snapshot.mission.projectId
+        ? { state: "loading" }
+        : { state: "ready", snapshot: deliverySnapshot, actions: deliveryActions };
+
+  // Connection problems are reported before the terminal state, because reconnecting restores the
+  // rest of the app while a completed mission stays read-only either way.
   const syncMessage =
     environment?.connection.phase === "reconnecting"
       ? "Reconnecting. Showing the last mission snapshot; changes are temporarily disabled."
@@ -920,7 +971,11 @@ function MissionDetailRoute() {
           ? "Showing cached mission data while the live connection resumes."
           : detailState.status === "synchronizing"
             ? "Refreshing mission history from the server..."
-            : null;
+            : snapshot.mission.status === "completed"
+              ? "This mission is completed. Its history is read-only."
+              : snapshot.mission.status === "cancelled"
+                ? "This mission is cancelled. Its history is read-only."
+                : null;
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden bg-background text-foreground">
@@ -951,31 +1006,7 @@ function MissionDetailRoute() {
         managedWorktrees={snapshot.managedWorktrees}
         agentHandoffs={snapshot.agentHandoffs}
         events={snapshot.events}
-        delivery={
-          deliverySnapshot === null || deliverySnapshot.projectId !== snapshot.mission.projectId
-            ? undefined
-            : {
-                state: "ready",
-                snapshot: deliverySnapshot,
-                actions: canOperateDelivery
-                  ? {
-                      onRequestApproval: ({ targetId, reason }) =>
-                        handleRequestDeliveryApproval(targetId, reason),
-                      onDecideApproval: ({ targetId, decision, reason }) =>
-                        handleDecideDeliveryApproval(targetId, decision, reason),
-                      onExecuteMerge: ({ targetId }) => handleExecuteDeliveryMerge(targetId),
-                      onCreateReleasePlan: handleProposeDeliveryRelease,
-                      onExecuteRelease: ({ targetId }) => handlePublishDeliveryRelease(targetId),
-                      onCreateDeploymentPlan: handleProposeDeliveryDeployment,
-                      onExecuteDeployment: ({ targetId }) =>
-                        handleExecuteDeliveryDeployment(targetId),
-                      onCancelDeployment: ({ targetId, reason }) =>
-                        handleCancelDeliveryDeployment(targetId, reason),
-                      onExecuteRollback: ({ targetId }) => handleExecuteDeliveryRollback(targetId),
-                    }
-                  : undefined,
-              }
-        }
+        delivery={deliveryProps}
         providerChoices={providerChoices}
         canMutate={canMutate}
         providerReady={providerChoices.length > 0}
@@ -984,10 +1015,8 @@ function MissionDetailRoute() {
         onStartMission={() => startRun()}
         onCancelMission={handleCancelMission}
         onConfigureTeam={handleConfigureTeam}
-        onAddAgent={handleAddAgent}
-        onUpdateAgent={handleUpdateAgent}
+        onSaveAgent={handleSaveAgent}
         onRemoveAgent={handleRemoveAgent}
-        onUpdateAgentPermissions={handleUpdatePermissions}
         onSchedulerAction={handleSchedulerAction}
         onAddDependency={handleAddDependency}
         onRemoveDependency={handleRemoveDependency}
@@ -1010,11 +1039,19 @@ function MissionDetailRoute() {
         onAbortIntegration={handleAbortIntegration}
         onRemoveWorktree={handleRemoveWorktree}
         onRequestVerification={handleRequestVerification}
+        activeTab={tab ?? DEFAULT_MISSION_TAB}
+        onTabChange={(next) => {
+          void navigate({ to: ".", search: { tab: next }, replace: true });
+        }}
       />
     </SidebarInset>
   );
 }
 
 export const Route = createFileRoute("/missions/$environmentId/$missionId")({
+  // Absent rather than defaulted, so an unvisited mission keeps a clean URL and only an explicit
+  // tab choice is worth sharing or restoring.
+  validateSearch: (search: Record<string, unknown>): { readonly tab?: MissionTab } =>
+    isMissionTab(search.tab) ? { tab: search.tab } : {},
   component: MissionDetailRoute,
 });
